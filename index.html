@@ -33,8 +33,10 @@ button{font:inherit;color:inherit}
 #guide i:nth-child(1){left:-3px;top:-3px;border-right:0;border-bottom:0}#guide i:nth-child(2){right:-3px;top:-3px;border-left:0;border-bottom:0}
 #guide i:nth-child(3){left:-3px;bottom:-3px;border-right:0;border-top:0}#guide i:nth-child(4){right:-3px;bottom:-3px;border-left:0;border-top:0}
 #guide .zone{position:absolute;border:1.5px dashed rgba(255,255,255,.55);border-radius:6px}
-#guide .zt{left:4%;right:18%;top:3%;height:7%}
-#guide .zb{left:3%;width:52%;bottom:1.5%;height:8%}
+#guide .zt{left:3%;right:14%;top:2%;height:10%}
+#guide .zb{left:2%;width:60%;bottom:1%;height:12%}
+#guide .zt::after{content:"name";}#guide .zb::after{content:"set & number";}
+#guide .zone::after{position:absolute;left:4px;top:-18px;font-size:11px;color:#fff;text-shadow:0 1px 2px #000}
 #guide.snap{animation:snap .35s ease-out}
 #guide.good{animation:good .8s ease-out}#guide.good i{animation:goodc .8s ease-out}
 #guide.meh{animation:meh .8s ease-out}
@@ -46,7 +48,7 @@ button{font:inherit;color:inherit}
 #msg{flex:1;font-weight:700;font-size:17px;text-shadow:0 1px 3px #000}
 .bot{position:absolute;left:0;right:0;bottom:0;padding:10px 12px calc(env(safe-area-inset-bottom) + 12px);background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;flex-direction:column;gap:10px}
 #tiles{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;min-height:10px}
-.tile{flex:none;width:86px;border-radius:9px;overflow:hidden;background:var(--panel);border:3px solid #777;font-size:11px;line-height:1.25;position:relative}
+.tile{flex:none;width:64px;border-radius:9px;overflow:hidden;background:var(--panel);border:3px solid #777;font-size:11px;line-height:1.25;position:relative}
 .tile img{display:block;width:100%;aspect-ratio:63/88;object-fit:cover;background:#222}
 .tile span{display:block;padding:3px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile.ok{border-color:var(--ok)}.tile.pick{border-color:var(--warn)}.tile.fail{border-color:var(--bad)}.tile.work{border-color:#6c7a9c}
@@ -228,10 +230,12 @@ let chain=Promise.resolve();function serial(fn){const p=chain.then(fn,fn);chain=
 /* ---------- identify ---------- */
 async function identify(r,card){
   const W=card.width,H=card.height;
-  const titleC=cropCanvas(card,W*0.04,H*0.03,W*0.78,H*0.075,2.2,false);
-  const collC=cropCanvas(card,W*0.025,H*0.895,W*0.55,H*0.085,3,true);
-  const title=(await ocr(titleC,7)).replace(/[^A-Za-z0-9,'\- ]/g," ").replace(/\s+/g," ").trim();
-  const collText=await ocr(collC,6,"0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ•*.- ");
+  const clean=t=>t.replace(/[^A-Za-z0-9,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
+  let title=clean(await ocr(cropCanvas(card,W*0.035,H*0.03,W*0.8,H*0.08,2.2,false),7));
+  if(norm(title).length<4)title=clean(await ocr(cropCanvas(card,W*0.03,H*0.015,W*0.84,H*0.11,2,true),6))||title;
+  const W2="0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ•*.- ";
+  let collText=await ocr(cropCanvas(card,W*0.02,H*0.885,W*0.6,H*0.105,3,true),6,W2);
+  if(!parseCollector(collText).num)collText+=" "+await ocr(cropCanvas(card,W*0.02,H*0.86,W*0.65,H*0.13,2.5,false),6,W2);
   const cl=parseCollector(collText);
   r.read={title,coll:collText};
   const capVec=vecFrom(card,0,0,W,H);
@@ -242,7 +246,8 @@ async function identify(r,card){
   }
   // 2. name, then the right printing
   let named=null;
-  if(title&&norm(title).length>=3)named=await sf(`/cards/named?fuzzy=${encodeURIComponent(title)}`);
+  if(title&&norm(title).length>=3){const w=title.split(" ");const tries=[title];if(w.length>2)tries.push(w.slice(0,-1).join(" "));if(w.length>3)tries.push(w.slice(0,2).join(" "));
+    for(const t of tries){named=await sf(`/cards/named?fuzzy=${encodeURIComponent(t)}`);if(named)break;}}
   if(!named&&cl.set&&cl.num){const c=await sf(`/cards/${encodeURIComponent(cl.set.toLowerCase())}/${encodeURIComponent(cl.num.toLowerCase())}`);if(c){done(r,c,"pick",[c]);return;}}
   if(!named){
     // last try: picture match isn't possible without a name; ask the user
@@ -271,8 +276,8 @@ function done(r,c,status,choices){
 /* ---------- camera + auto snap ---------- */
 const v=$("v");let stream=null,loopT=null;
 function rect(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight;
-  const visW=Math.min(vw,vh*bw/bh),visH=Math.min(vh,vw*bh/bw);const ch=Math.min(visH*0.62,visW*0.86*88/63),cw=ch*63/88;
-  return{x:(vw-cw)/2,y:(vh-ch)/2-visH*0.05,w:cw,h:ch};}
+  const visW=Math.min(vw,vh*bw/bh),visH=Math.min(vh,vw*bh/bw);const ch=Math.min(visH*0.72,visW*0.94*88/63),cw=ch*63/88;
+  return{x:(vw-cw)/2,y:(vh-ch)/2-visH*0.045,w:cw,h:ch};}
 function placeGuide(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight,k=Math.max(bw/vw,bh/vh);
   const ox=(bw-vw*k)/2,oy=(bh-vh*k)/2,r=rect();Object.assign($("guide").style,{left:ox+r.x*k+"px",top:oy+r.y*k+"px",width:r.w*k+"px",height:r.h*k+"px"});}
 addEventListener("resize",()=>setTimeout(placeGuide,200));
@@ -285,6 +290,7 @@ function msg(t){$("msg").textContent=t;}
 let lastT=-1,staleSince=0;
 function tick(){
   if(!stream)return;
+  if(!ocrReady&&$("msg").textContent!=="Card reader still loading…")msg("Card reader still loading…");
   try{
   const tr=stream.getVideoTracks()[0];
   if(v.currentTime!==lastT||v.readyState<2){lastT=v.currentTime;staleSince=Date.now();}
@@ -293,8 +299,8 @@ function tick(){
     const need=opts.fast?2:4,calm=opts.fast?6:4;
     if(prev){const m=dif(g,prev);still=m<calm?still+1:0;
       if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;msg("Next card…");}
-      if(opts.auto&&armed&&still>=need&&detail(g)>5&&busy<40)capture(g);
-      else if(!opts.fast&&armed&&still>=1&&still<need&&detail(g)>5)msg("Hold still…");}
+      if(opts.auto&&armed&&still>=need&&detail(g)>3.5&&busy<40)capture(g);
+      else if(!opts.fast&&armed&&still>=1&&still<need&&detail(g)>3.5)msg("Hold still…");}
     prev=g;}
   }catch(e){}
   loopT=setTimeout(tick,opts.fast?70:110);
@@ -427,6 +433,7 @@ $("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
+$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
 $("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;saveOpts();$("settings").classList.add("hidden");};
