@@ -78,15 +78,20 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 #start{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;background:var(--bg)}
 #start h1{margin:0;font-size:28px}
 #start p{max-width:30em;color:var(--muted);margin:0}
+.homerow{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}.homerow .btn{min-width:110px}
+#homeNote.okc{color:var(--ok);font-weight:600}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 150px);transform:translateX(-50%);background:#fff;color:#000;padding:10px 14px;border-radius:12px;font-weight:600;z-index:30;max-width:90vw;text-align:center}
 </style>
 </head>
 <body>
 
 <div id="start">
+  <img src="icon-192.png" alt="" width="84" height="84" style="border-radius:20px">
   <h1>Card Scanner</h1>
-  <p>Hold each card in the frame. It snaps on its own, reads the card, checks it against Scryfall and flashes green. When the stack is done, send it to your Card Binder.</p>
-  <button class="btn primary" id="go" style="min-width:220px;font-size:18px">Start camera</button>
+  <p id="homeNote">Hold each card in the frame. It snaps on its own, reads the card, checks it against Scryfall and flashes green. When the stack is done, send it to your Card Binder.</p>
+  <button class="btn primary" id="go" style="min-width:240px;min-height:58px;font-size:19px">📷 Start scanning</button>
+  <div class="homerow"><button class="btn" id="homeStack">Stack</button><button class="btn" id="homeSend">Send to binder</button><button class="btn" id="homeSet" aria-label="Settings">⚙︎</button></div>
+  <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
 </div>
@@ -94,7 +99,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <div id="cam">
   <video id="v" playsinline muted autoplay></video>
   <div id="guide"><i></i><i></i><i></i><i></i><div class="zone zt"></div><div class="zone zb"></div></div>
-  <div class="top"><span id="msg">Hold a card in the frame</span>
+  <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Hold a card in the frame</span>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
     <button class="btn sm" id="setBtn" aria-label="Settings">⚙︎</button></div>
   <div class="bot">
@@ -104,7 +109,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 </div>
 
 <section class="sheet hidden" id="stack" aria-labelledby="stackTitle">
-  <header><h2 id="stackTitle">Stack</h2><button class="btn sm" id="stackClose">Back to camera</button></header>
+  <header><h2 id="stackTitle">Stack</h2><button class="btn sm" id="stackClose">Back</button></header>
   <div class="body" id="stackBody"></div>
   <footer><button class="btn" id="clearBtn">Clear stack</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
 </section>
@@ -185,7 +190,7 @@ function cropCanvas(src,x,y,w,h,scale,bin){
 async function ocr(canvas,psm,white){
   if(!ocrReady)return"";
   await worker.setParameters({tessedit_pageseg_mode:String(psm),tessedit_char_whitelist:white||""});
-  const r=await worker.recognize(canvas);return(r&&r.data&&r.data.text||"").trim();
+  try{const r=await worker.recognize(canvas);return(r&&r.data&&r.data.text||"").trim();}finally{canvas.width=0;canvas.height=0;}
 }
 function parseCollector(t){
   t=t.toUpperCase().replace(/[|]/g,"I");
@@ -204,7 +209,8 @@ function sim(a,b){a=norm(a);b=norm(b);if(!a||!b)return 0;if(a===b)return 1;
   return 1-d[m][n]/Math.max(m,n);}
 
 /* image comparison for picking the exact printing */
-function vecFrom(src,sx,sy,sw,sh){const c=document.createElement("canvas");c.width=24;c.height=33;const g=c.getContext("2d",{willReadFrequently:true});
+const vecC=document.createElement("canvas");vecC.width=24;vecC.height=33;const vecG=vecC.getContext("2d",{willReadFrequently:true});
+function vecFrom(src,sx,sy,sw,sh){const g=vecG;g.clearRect(0,0,24,33);
   g.drawImage(src,sx,sy,sw,sh,0,0,24,33);const a=g.getImageData(0,0,24,33).data;const v=new Float32Array(24*33*3);let k=0;
   for(let i=0;i<a.length;i+=4){v[k++]=a[i];v[k++]=a[i+1];v[k++]=a[i+2];}
   let m=0;for(const x of v)m+=x;m/=v.length;let s=0;for(let i=0;i<v.length;i++){v[i]-=m;s+=v[i]*v[i];}s=Math.sqrt(s)||1;for(let i=0;i<v.length;i++)v[i]/=s;return v;}
@@ -275,14 +281,20 @@ function sig(){const r=rect();sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const 
 const dif=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;};
 const detail=a=>{let s=0;for(let y=0;y<56;y++)for(let x=1;x<40;x++)s+=Math.abs(a[y*40+x]-a[y*40+x-1]);return s/(56*39);};
 function msg(t){$("msg").textContent=t;}
+let lastT=-1,staleSince=0;
 function tick(){
   if(!stream)return;
+  try{
+  const tr=stream.getVideoTracks()[0];
+  if(v.currentTime!==lastT||v.readyState<2){lastT=v.currentTime;staleSince=Date.now();}
+  if(!tr||tr.readyState==="ended"||(Date.now()-staleSince>2500&&v.readyState>=2)){stopCam();showHome("The camera paused. Tap Start scanning to keep going. Your stack is saved.");return;}
   if(v.videoWidth){const g=sig();
     if(prev){const m=dif(g,prev);still=m<4?still+1:0;
       if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;msg("Next card…");}
       if(opts.auto&&armed&&still>=4&&detail(g)>5&&busy<3)capture(g);
       else if(armed&&still>=1&&still<4&&detail(g)>5)msg("Hold still…");}
     prev=g;}
+  }catch(e){}
   loopT=setTimeout(tick,110);
 }
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
@@ -296,7 +308,7 @@ async function capture(g){
   const r={k:++seq,status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
   stack.unshift(r);drawTiles();busy++;
   try{await serial(()=>identify(r,card));}catch(e){r.status="fail";r.why="Something went wrong reading this card.";}
-  finally{busy--;}
+  finally{busy--;card.width=0;card.height=0;}
   if(r.status==="ok"){
     const dup=stack.find(x=>x!==r&&x.status==="ok"&&x.id===r.id&&x.foil===r.foil);
     if(dup){dup.qty+=1;stack=stack.filter(x=>x!==r);msg(`${dup.name} ×${dup.qty}`);}
@@ -307,16 +319,33 @@ async function capture(g){
   if(r.status!=="fail"&&r.img)r.thumb=await thumbFor(r.img);
   saveStack();drawTiles();
 }
-async function thumbFor(url){const im=await loadImg(url);if(!im)return"";try{const c=document.createElement("canvas");c.width=336;c.height=Math.round(336*im.naturalHeight/im.naturalWidth);c.getContext("2d").drawImage(im,0,0,c.width,c.height);return c.toDataURL("image/jpeg",0.78);}catch(e){return"";}}
+async function thumbFor(url){const im=await loadImg(url);if(!im)return"";try{const c=document.createElement("canvas");c.width=336;c.height=Math.round(336*im.naturalHeight/im.naturalWidth);c.getContext("2d").drawImage(im,0,0,c.width,c.height);const u=c.toDataURL("image/jpeg",0.78);c.width=0;c.height=0;return u;}catch(e){return"";}}
 async function startCam(){
   try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});}
   catch(e){$("startErr").textContent=e&&e.name==="NotAllowedError"?"Camera access was blocked. On iPhone/iPad: Settings › Safari › Camera › Allow, then reload.":"Couldn't open the camera: "+(e&&e.message||e);return;}
   v.srcObject=stream;try{await v.play();}catch(e){}
-  v.addEventListener("loadedmetadata",placeGuide);setTimeout(placeGuide,300);
-  $("start").classList.add("hidden");tick();
+  v.onloadedmetadata=placeGuide;setTimeout(placeGuide,300);
+  prev=null;still=0;armed=true;lastT=-1;staleSince=Date.now();
+  $("start").classList.add("hidden");$("startErr").textContent="";msg("Hold a card in the frame");tick();
+}
+function stopCam(){clearTimeout(loopT);if(stream){stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});stream=null;}try{v.pause();v.srcObject=null;}catch(e){}}
+function showHome(note,ok){
+  $("stack").classList.add("hidden");$("settings").classList.add("hidden");
+  const n=total(),sent=stack.length&&stack.every(r=>r.sent||r.status==="fail");
+  $("homeNote").textContent=note||(n?`${n} card${n===1?"":"s"} in your stack${sent?" (already sent)":""}.`:"Hold each card in the frame. It snaps on its own, reads the card, checks it against Scryfall and flashes green. When the stack is done, send it to your Card Binder.");
+  $("homeNote").className=ok?"okc":"";
+  $("homeStack").textContent=n?`Stack (${n})`:"Stack";$("homeSend").disabled=!n;
+  $("homeClear").classList.toggle("hidden",!stack.some(r=>r.sent));
+  $("start").classList.remove("hidden");
 }
 $("go").onclick=startCam;
-document.addEventListener("visibilitychange",()=>{if(document.hidden&&stream){stream.getTracks().forEach(t=>t.stop());stream=null;clearTimeout(loopT);}else if(!document.hidden&&!stream&&$("start").classList.contains("hidden"))startCam();});
+$("homeBtn").onclick=()=>{stopCam();showHome();};
+$("homeStack").onclick=()=>{drawStack();$("stack").classList.remove("hidden");};
+$("homeSend").onclick=()=>$("sendBtn").click();
+$("homeSet").onclick=()=>$("setBtn").click();
+$("homeClear").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawTiles();showHome();};
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&stream){stopCam();showHome("Camera paused while you were away. Tap Start scanning to keep going. Your stack is saved.");}});
+addEventListener("pagehide",stopCam);
 
 /* ---------- tiles + stack ---------- */
 const total=()=>stack.filter(r=>r.status==="ok"||r.status==="pick").reduce((s,r)=>s+r.qty,0);
@@ -345,7 +374,7 @@ function drawStack(){
   $("stackTitle").textContent=`Stack · ${total()} card${total()===1?"":"s"}`;
 }
 $("stackBtn").onclick=()=>{drawStack();$("stack").classList.remove("hidden");};
-$("stackClose").onclick=()=>{$("stack").classList.add("hidden");drawTiles();};
+$("stackClose").onclick=()=>{$("stack").classList.add("hidden");drawTiles();if(!stream)showHome();};
 $("stackBody").addEventListener("click",async e=>{
   const b=e.target.closest("[data-a]");if(!b||b.tagName==="INPUT")return;const k=+b.closest(".card").dataset.k;const r=stack.find(x=>x.k===k);if(!r)return;
   const a=b.dataset.a;
@@ -379,9 +408,10 @@ $("sendBtn").onclick=async()=>{
   if(!copied){toast("Couldn't copy. Try again.");return;}
   rows.forEach(r=>r.sent=true);ls.set("scan.lastSent",Date.now());
   toast(`Copied ${total()} cards${unsure?` (${unsure} unsure)`:""}. In your binder: Scan cards › Paste from scanner.`,5000);
-  if(opts.binder){setTimeout(()=>{location.href=opts.binder;},700);}
-  else toast("Copied. Add your binder link in ⚙︎ Settings so this opens it for you next time.",5000);
-  setTimeout(()=>{if(confirm("Sent to your binder. Clear this stack now?")){stack=[];saveStack();drawStack();drawTiles();}},opts.binder?100:1500);
+  saveStack();stopCam();
+  showHome(`Copied ${rows.reduce((s,r)=>s+r.qty,0)} cards. In your binder: Scan cards › 📋 Paste from scanner › Save. Then come back and tap Clear sent cards.`,true);
+  if(opts.binder){const w=window.open(opts.binder,"_blank");if(w){try{w.opener=null;}catch(e){}}else location.href=opts.binder;}
+  else toast("Add your binder link in ⚙︎ Settings so this opens it for you next time.",5000);
 };
 
 /* ---------- settings ---------- */
@@ -389,9 +419,9 @@ function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilB
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
 $("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("settings").classList.remove("hidden");};
-$("setClose").onclick=()=>{const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
+$("setClose").onclick=()=>{setTimeout(()=>{if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;saveOpts();$("settings").classList.add("hidden");};
-syncFoil();drawTiles();
+syncFoil();drawTiles();showHome();
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 })();
 </script>
