@@ -289,31 +289,47 @@ function showBox(r,found){const g=$("guide");if(!r){g.classList.add("none");retu
 function placeGuide(){showBox(rect(),false);}
 addEventListener("resize",()=>setTimeout(placeGuide,200));
 /* find the card anywhere in view */
-const DW=120;const det=document.createElement("canvas");const dctx=det.getContext("2d",{willReadFrequently:true});let mask=null,seen=null,stackA=null;
+const DW=120;const det=document.createElement("canvas");const dctx=det.getContext("2d",{willReadFrequently:true});let mask=null,lab=null,stackA=null;
+const med=arr=>{arr.sort((a,b)=>a-b);return arr[arr.length>>1]||0;};
 function detect(){
-  const V=vis();const DH=Math.round(DW*V.h/V.w);if(det.width!==DW||det.height!==DH){det.width=DW;det.height=DH;mask=new Uint8Array(DW*DH);seen=new Uint8Array(DW*DH);stackA=new Int32Array(DW*DH);}
+  const V=vis();const DH=Math.round(DW*V.h/V.w);if(det.width!==DW||det.height!==DH){det.width=DW;det.height=DH;mask=new Uint8Array(DW*DH);lab=new Int32Array(DW*DH);stackA=new Int32Array(DW*DH);}
   dctx.drawImage(v,V.x,V.y,V.w,V.h,0,0,DW,DH);const a=dctx.getImageData(0,0,DW,DH).data;const N=DW*DH;
-  let br=0,bg=0,bb=0,bn=0;const ring=(x,y)=>{const o=(y*DW+x)*4;br+=a[o];bg+=a[o+1];bb+=a[o+2];bn++;};
-  for(let x=0;x<DW;x+=2){ring(x,1);ring(x,DH-2);}for(let y=0;y<DH;y+=2){ring(1,y);ring(DW-2,y);}br/=bn;bg/=bn;bb/=bn;
+  const R=[],G=[],B=[];const ring=(x,y)=>{const o=(y*DW+x)*4;R.push(a[o]);G.push(a[o+1]);B.push(a[o+2]);};
+  for(let x=0;x<DW;x+=2){ring(x,1);ring(x,DH-2);}for(let y=0;y<DH;y+=2){ring(1,y);ring(DW-2,y);}
+  const br=med(R),bg=med(G),bb=med(B);
   for(let i=0,o=0;i<N;i++,o+=4)mask[i]=(Math.abs(a[o]-br)+Math.abs(a[o+1]-bg)+Math.abs(a[o+2]-bb))>opts.sens?1:0;
-  seen.fill(0);let best=null;
-  for(let s0=0;s0<N;s0++){if(!mask[s0]||seen[s0])continue;let sp=0,cnt=0,x0=DW,y0=DH,x1=0,y1=0;stackA[sp++]=s0;seen[s0]=1;
-    while(sp){const q=stackA[--sp];cnt++;const x=q%DW,y=(q/DW)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
-      if(x>0&&mask[q-1]&&!seen[q-1]){seen[q-1]=1;stackA[sp++]=q-1;}if(x<DW-1&&mask[q+1]&&!seen[q+1]){seen[q+1]=1;stackA[sp++]=q+1;}
-      if(y>0&&mask[q-DW]&&!seen[q-DW]){seen[q-DW]=1;stackA[sp++]=q-DW;}if(y<DH-1&&mask[q+DW]&&!seen[q+DW]){seen[q+DW]=1;stackA[sp++]=q+DW;}}
-    if(!best||cnt>best.cnt)best={cnt,x0,y0,x1,y1};}
-  if(!best||best.cnt<N*0.05)return{why:"no card in view"};
-  const bw=best.x1-best.x0+1,bh=best.y1-best.y0+1,fill=best.cnt/(bw*bh),asp=bw/bh;
-  if(best.x0<=1||best.y0<=1||best.x1>=DW-2||best.y1>=DH-2)return{why:"card touches the edge: back up a bit"};
-  if(asp<0.55||asp>0.92)return{why:asp>0.92?"card is sideways or a hand is in view":"card shape not clear"};
-  if(fill<0.6)return{why:"card edges not clear"};
-  const k=V.w/DW,pad=0.012;let x=V.x+best.x0*k,y=V.y+best.y0*k,w=bw*k,h=bh*k;x-=w*pad;y-=h*pad;w*=1+pad*2;h*=1+pad*2;
+  lab.fill(0);let id=0;const comps=[];
+  for(let s0=0;s0<N;s0++){if(!mask[s0]||lab[s0])continue;id++;let sp=0,cnt=0,ax=DW,ay=DH,bx=0,by=0;stackA[sp++]=s0;lab[s0]=id;
+    while(sp){const q=stackA[--sp];cnt++;const x=q%DW,y=(q/DW)|0;if(x<ax)ax=x;if(x>bx)bx=x;if(y<ay)ay=y;if(y>by)by=y;
+      if(x>0&&mask[q-1]&&!lab[q-1]){lab[q-1]=id;stackA[sp++]=q-1;}if(x<DW-1&&mask[q+1]&&!lab[q+1]){lab[q+1]=id;stackA[sp++]=q+1;}
+      if(q>=DW&&mask[q-DW]&&!lab[q-DW]){lab[q-DW]=id;stackA[sp++]=q-DW;}if(q<N-DW&&mask[q+DW]&&!lab[q+DW]){lab[q+DW]=id;stackA[sp++]=q+DW;}}
+    if(cnt>=N*0.03)comps.push({id,cnt,ax,ay,bx,by});}
+  if(!comps.length)return{why:"no card in view"};
+  comps.sort((p,q)=>q.cnt-p.cnt);
+  const run=(arr,thr,lo,hi)=>{const gap=5;let bs=-1,be=-1,s=-1,last=-1;for(let k=lo;k<=hi+gap+1;k++){const on=k<=hi&&arr[k]>=thr;
+      if(on){if(s<0)s=k;last=k;}else if(s>=0&&k-last>gap){if(last-s>be-bs){bs=s;be=last;}s=-1;}}return[bs,be];};
+  let why="card shape not clear: keep other things out of view",got=null;
+  for(const c of comps.slice(0,4)){
+    const rc=new Int32Array(DH),cc=new Int32Array(DW);
+    for(let y=c.ay;y<=c.by;y++)for(let x=c.ax,q=y*DW+c.ax;x<=c.bx;x++,q++)if(lab[q]===c.id){rc[y]++;cc[x]++;}
+    let mr=0;for(let y=c.ay;y<=c.by;y++)if(rc[y]>mr)mr=rc[y];let mc=0;for(let x=c.ax;x<=c.bx;x++)if(cc[x]>mc)mc=cc[x];
+    const [y0,y1]=run(rc,mr*0.6,c.ay,c.by),[x0,x1]=run(cc,mc*0.6,c.ax,c.bx);if(y0<0||x0<0)continue;
+    const bw=x1-x0+1,bh=y1-y0+1,asp=bw/bh;
+    if((x0<=0&&x1>=DW-1)||(y0<=0&&y1>=DH-1)){why="card too close: back up a bit";continue;}
+    if(asp<0.55||asp>0.92){if(c===comps[0])why=asp>0.92?"card is sideways, or something else is touching it":"card shape not clear: keep other things out of view";continue;}
+    if(bw*bh<N*0.03){why="card too far: move closer";continue;}
+    got={x0,y0,bw,bh,asp};break;}
+  if(!got)return{why};
+  const {x0,y0,bw,bh,asp}=got;
+  const k=V.w/DW,pad=0.012;let x=V.x+x0*k,y=V.y+y0*k,w=bw*k,h=bh*k;x-=w*pad;y-=h*pad;w*=1+pad*2;h*=1+pad*2;
   return{x,y,w,h,asp};
 }
 const small=document.createElement("canvas");small.width=40;small.height=56;const sctx=small.getContext("2d",{willReadFrequently:true});
-let prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
+let prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
 function sigOf(r){sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
 const sig=()=>sigOf(rect());
+const coarseC=document.createElement("canvas");coarseC.width=8;coarseC.height=11;const coarseG=coarseC.getContext("2d",{willReadFrequently:true});
+function idSig(r){coarseG.imageSmoothingQuality="high";coarseG.drawImage(v,r.x+r.w*0.08,r.y+r.h*0.08,r.w*0.84,r.h*0.84,0,0,8,11);const d=coarseG.getImageData(0,0,8,11).data;const g=new Float32Array(264);for(let i=0,k=0;i<d.length;i+=4){g[k++]=d[i];g[k++]=d[i+1];g[k++]=d[i+2];}return g;}
 const dif=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;};
 const detail=a=>{let s=0;for(let y=0;y<56;y++)for(let x=1;x<40;x++)s+=Math.abs(a[y*40+x]-a[y*40+x-1]);return s/(56*39);};
 function msg(t){$("msg").textContent=t;}
@@ -329,15 +345,15 @@ function tick(){
     const d=detect();const need=opts.fast?2:4;
     if(!d.w){lost++;if(lost>4){showBox(null);prev=null;still=0;if(lastSig)armed=true;}if(!busy||lost===5)msg(lost>4&&d.why==="no card in view"?"Lay a card anywhere in view":"Looking… "+d.why);
       if(opts.meter)$("meter").textContent=`no card: ${d.why}\nsensitivity ${opts.sens}\nvideo ${v.videoWidth}×${v.videoHeight}`;}
-    else{lost=0;const g=sigOf(d);let m=prev?dif(g,prev):99;
-      if(prevBox){m+=(Math.abs(d.x-prevBox.x)+Math.abs(d.y-prevBox.y)+Math.abs(d.w-prevBox.w))/d.w*120;}
-      const calm=Math.max(opts.fast?7:5,floor*2.5);if(prev&&m<floor*3)floor=floor*0.97+m*0.03;
+    else{lost=0;const g=idSig(d);let m=prevWhole?dif(whole,prevWhole):99;
+      const calm=Math.max(opts.fast?4:3,floor*2.5);if(prevWhole&&m<floor*3)floor=floor*0.97+m*0.03;
       still=m<calm?still+1:0;showBox(d,true);
-      if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;}
+      if(!armed&&lastSig&&dif(g,lastSig)>22){armed=true;}
       if(opts.meter)$("meter").textContent=`card found ${Math.round(d.w)}×${Math.round(d.h)}px\nmotion ${m.toFixed(1)} (still under ${calm.toFixed(1)})  still ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}`;
       if(opts.auto&&armed&&still>=need&&busy<40)capture(g,d);
       else if(armed&&!busy)msg(still?"Hold still…":"Card found");
       prev=g;prevBox=d;}
+    prevWhole=whole;
   }
   }catch(e){}
   loopT=setTimeout(tick,opts.fast?70:110);
@@ -346,7 +362,7 @@ function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");v
 let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
 async function capture(g,box){
   if(!box){const d=detect();box=d.w?d:rect();}
-  armed=false;still=0;lastSig=g||sigOf(box);
+  armed=false;still=0;lastSig=g||idSig(box);
   const card=document.createElement("canvas");card.width=630;card.height=880;
   card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
   flash("snap");msg("Got it ✓ next card");
@@ -371,7 +387,7 @@ async function startCam(){
   catch(e){$("startErr").textContent=e&&e.name==="NotAllowedError"?"Camera access was blocked. On iPhone/iPad: Settings › Safari › Camera › Allow, then reload.":"Couldn't open the camera: "+(e&&e.message||e);return;}
   v.srcObject=stream;try{await v.play();}catch(e){}
   v.onloadedmetadata=placeGuide;setTimeout(placeGuide,300);
-  prev=null;prevBox=null;still=0;armed=true;staleSince=Date.now();frozenSig=null;
+  prevWhole=null;prev=null;prevBox=null;still=0;armed=true;staleSince=Date.now();frozenSig=null;
   setupTrack();
   $("start").classList.add("hidden");$("startErr").textContent="";msg("Lay a card anywhere in view");tick();
 }
