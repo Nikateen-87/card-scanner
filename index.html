@@ -54,7 +54,7 @@ button{font:inherit;color:inherit}
 .row{display:flex;gap:10px;align-items:center}
 .row .grow{flex:1;text-align:center;font-size:14px;color:#ddd}
 /* sheets */
-.sheet{position:fixed;inset:0;z-index:10;background:var(--bg);display:flex;flex-direction:column}
+.sheet{position:fixed;inset:0;z-index:25;background:var(--bg);display:flex;flex-direction:column}
 .sheet header{display:flex;gap:10px;align-items:center;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;border-bottom:1px solid var(--line)}
 .sheet header h2{flex:1;margin:0;font-size:20px}
 .sheet .body{flex:1;overflow:auto;padding:12px 14px 20px;-webkit-overflow-scrolling:touch}
@@ -112,7 +112,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <section class="sheet hidden" id="stack" aria-labelledby="stackTitle">
   <header><h2 id="stackTitle">Stack</h2><button class="btn sm" id="stackClose">Back</button></header>
   <div class="body" id="stackBody"></div>
-  <footer><button class="btn" id="clearBtn">Clear stack</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
+  <footer><button class="btn" id="clearBtn">Clear stack</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
 </section>
 
 <section class="sheet hidden" id="settings" aria-labelledby="setTitle">
@@ -307,7 +307,7 @@ async function capture(g){
   card.getContext("2d").drawImage(v,r0.x,r0.y,r0.w,r0.h,0,0,630,880);
   flash("snap");msg("Reading…");
   const thumb=card.toDataURL("image/jpeg",0.6);
-  const r={k:++seq,status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
+  const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
   stack.unshift(r);drawTiles();busy++;
   try{await serial(()=>identify(r,card));}catch(e){r.status="fail";r.why="Something went wrong reading this card.";}
   finally{busy--;card.width=0;card.height=0;}
@@ -360,20 +360,22 @@ function drawTiles(){
 function drawStack(){
   const b=$("stackBody");
   if(!stack.length){b.innerHTML='<p class="hint">Nothing scanned yet.</p>';$("sendBtn").disabled=true;return;}
-  b.innerHTML=stack.map(r=>`<div class="card ${r.status}" data-k="${r.k}">
+  const old=stack.filter(r=>r.at&&Date.now()-r.at>12*3600e3).map(r=>r.at);
+  const head=old.length?`<p class="hint" style="margin-top:0">${old.length} card${old.length===1?" was":"s were"} scanned ${new Date(Math.min(...old)).toLocaleDateString(undefined,{month:"short",day:"numeric"})} or earlier. ${stack.some(r=>r.sent)?"Cards marked sent ✓ are already in your binder if you saved them there.":""}</p>`:"";
+  b.innerHTML=head+stack.map(r=>`<div class="card ${r.status}" data-k="${r.k}">
     <img src="${esc(r.thumb||r.cap||"")}" alt="">
     <div><div class="nm">${r.status==="work"?"Reading…":r.status==="fail"?"Not read yet":esc(r.name)}${r.foil?" ✦":""}</div>
-      <div class="meta">${r.set?`${esc(r.set)} #${esc(r.num)} · ${esc(r.setName||"")}`:""}${r.price!=null?` · $${r.price.toFixed(2)}`:""}</div>
+      <div class="meta">${r.set?`${esc(r.set)} #${esc(r.num)} · ${esc(r.setName||"")}`:""}${r.price!=null?` · $${r.price.toFixed(2)}`:""}${r.sent?' · <span class="okc">sent ✓</span>':""}</div>
       ${r.why?`<div class="${r.status==="fail"?"bad":"warn"}" style="font-size:13px;margin-bottom:6px">${esc(r.why)}</div>`:""}
       <div class="acts">
         <span class="qty"><button class="btn sm" data-a="minus">−</button><b>×${r.qty}</b><button class="btn sm" data-a="plus">+</button></span>
         ${r.status!=="fail"&&r.status!=="work"?`<button class="btn sm" data-a="foil" ${(!r.canFoil&&!r.foil)||(r.foil&&!r.canNon)?"disabled":""}>${r.foil?"Foil ✦":"Not foil"}</button>`:""}
-        ${r.status!=="work"?`<button class="btn sm" data-a="other">Other printing</button>`:""}
+        ${r.status!=="work"?`<button class="btn sm" data-a="other">Other printing</button><button class="btn sm" data-a="search">Wrong card</button>`:""}
         <button class="btn sm" data-a="rm">Remove</button></div>
       ${r.choices&&r.status==="pick"?`<div class="choices">${r.choices.map((c,i)=>`<button class="choice" data-a="choose" data-i="${i}"><img src="${esc(c.small||c.img)}" alt=""><span>${esc(c.set)} #${esc(c.num)}<br>${esc(c.setName)}</span></button>`).join("")}</div>`:""}
       ${r.searching?`<div style="margin-top:8px;display:flex;gap:6px"><input class="field" data-a="q" placeholder="Card name" value="${esc(r.q||r.name||"")}"><button class="btn sm" data-a="find">Find</button></div>`:""}
     </div></div>`).join("");
-  $("sendBtn").disabled=!stack.some(r=>r.status==="ok"||r.status==="pick");
+  $("sendBtn").disabled=!stack.some(r=>r.status==="ok"||r.status==="pick");$("clearSentBtn").classList.toggle("hidden",!stack.some(r=>r.sent));
   $("stackTitle").textContent=`Stack · ${total()} card${total()===1?"":"s"}`;
 }
 $("stackBtn").onclick=()=>{drawStack();$("stack").classList.remove("hidden");};
@@ -383,6 +385,7 @@ $("stackBody").addEventListener("click",async e=>{
   const a=b.dataset.a;
   if(a==="plus")r.qty++;else if(a==="minus"){if(r.qty>1)r.qty--;}
   else if(a==="rm")stack=stack.filter(x=>x!==r);
+  else if(a==="search"){r.searching=!r.searching;r.q="";}
   else if(a==="foil"){r.foil=!r.foil;const p=r.prices||{};const v2=r.foil?(p.usd_foil||p.usd_etched):p.usd;r.price=v2?Math.round(parseFloat(v2)*100)/100:null;}
   else if(a==="choose"){const c=r.choices[+b.dataset.i];const keepQ=r.qty,keepF=r.foil;Object.assign(r,c);r.qty=keepQ;r.foil=keepF&&c.canFoil||(!c.canNon);const p=r.prices||{};const v2=r.foil?(p.usd_foil||p.usd_etched):p.usd;r.price=v2?Math.round(parseFloat(v2)*100)/100:null;r.status="ok";r.why="";r.choices=undefined;r.thumb=await thumbFor(r.img);}
   else if(a==="other"){
@@ -398,6 +401,7 @@ $("stackBody").addEventListener("click",async e=>{
   }
   saveStack();drawStack();drawTiles();
 });
+$("clearSentBtn").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawStack();drawTiles();};
 $("clearBtn").onclick=()=>{if(!stack.length)return;if(confirm("Clear every card from this stack? Send them to your binder first if you haven't.")){stack=[];saveStack();drawStack();drawTiles();}};
 
 /* ---------- send to binder ---------- */
