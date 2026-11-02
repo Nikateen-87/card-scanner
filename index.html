@@ -100,6 +100,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <video id="v" playsinline muted autoplay></video>
   <div id="guide"><i></i><i></i><i></i><i></i><div class="zone zt"></div><div class="zone zb"></div></div>
   <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Hold a card in the frame</span>
+    <button class="btn sm" id="fastBtn" aria-pressed="true">⚡ Fast</button>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
     <button class="btn sm" id="setBtn" aria-label="Settings">⚙︎</button></div>
   <div class="bot">
@@ -140,7 +141,7 @@ const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.par
 function toast(t,ms){const el=$("toast");el.textContent=t;el.classList.remove("hidden");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.add("hidden"),ms||2600);}
 
 /* ---------- state ---------- */
-let opts=Object.assign({foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
+let opts=Object.assign({fast:true,foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
 let stack=ls.get("scan.stack",[]);let seq=stack.reduce((m,r)=>Math.max(m,r.k||0),0);
 const saveOpts=()=>ls.set("scan.opts",opts);
 const saveStack=()=>{if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,choices:r.choices?r.choices.slice(0,6):undefined}))))ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,thumb:undefined,choices:undefined})));};
@@ -289,13 +290,14 @@ function tick(){
   if(v.currentTime!==lastT||v.readyState<2){lastT=v.currentTime;staleSince=Date.now();}
   if(!tr||tr.readyState==="ended"||(Date.now()-staleSince>2500&&v.readyState>=2)){stopCam();showHome("The camera paused. Tap Start scanning to keep going. Your stack is saved.");return;}
   if(v.videoWidth){const g=sig();
-    if(prev){const m=dif(g,prev);still=m<4?still+1:0;
+    const need=opts.fast?2:4,calm=opts.fast?6:4;
+    if(prev){const m=dif(g,prev);still=m<calm?still+1:0;
       if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;msg("Next card…");}
-      if(opts.auto&&armed&&still>=4&&detail(g)>5&&busy<3)capture(g);
-      else if(armed&&still>=1&&still<4&&detail(g)>5)msg("Hold still…");}
+      if(opts.auto&&armed&&still>=need&&detail(g)>5&&busy<40)capture(g);
+      else if(!opts.fast&&armed&&still>=1&&still<need&&detail(g)>5)msg("Hold still…");}
     prev=g;}
   }catch(e){}
-  loopT=setTimeout(tick,110);
+  loopT=setTimeout(tick,opts.fast?70:110);
 }
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
 let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
@@ -352,7 +354,8 @@ const total=()=>stack.filter(r=>r.status==="ok"||r.status==="pick").reduce((s,r)
 function drawTiles(){
   $("tiles").innerHTML=stack.slice(0,10).map(r=>`<div class="tile ${r.status}"><img src="${esc(r.thumb||r.cap||"")}" alt="">${r.qty>1?`<b>×${r.qty}</b>`:""}<span>${r.status==="work"?"Reading…":r.status==="fail"?"Not read":esc(r.name)+(r.foil?" ✦":"")}</span></div>`).join("");
   const n=total(),p=stack.filter(r=>r.status==="pick"||r.status==="fail").length;
-  $("count").textContent=`${n} card${n===1?"":"s"}${p?` · ${p} to check`:""}`;
+  const w=stack.filter(r=>r.status==="work").length;
+  $("count").textContent=`${n} card${n===1?"":"s"}${w?` · ${w} reading`:""}${p?` · ${p} to check`:""}`;
 }
 function drawStack(){
   const b=$("stackBody");
@@ -415,13 +418,15 @@ $("sendBtn").onclick=async()=>{
 };
 
 /* ---------- settings ---------- */
+function syncFast(){$("fastBtn").setAttribute("aria-pressed",opts.fast);$("fastBtn").textContent=opts.fast?"⚡ Fast":"Steady";}
+$("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.fast?"Fast: snaps the moment a new card lands. Good for dropping cards on a pile.":"Steady: waits for the card to be held still. Fewer blurry snaps.");};
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
 $("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;saveOpts();$("settings").classList.add("hidden");};
-syncFoil();drawTiles();showHome();
+syncFast();syncFoil();drawTiles();showHome();
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 })();
 </script>
