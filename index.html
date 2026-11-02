@@ -28,7 +28,8 @@ button{font:inherit;color:inherit}
 /* camera */
 #cam{position:fixed;inset:0;overflow:hidden;background:#000}
 #cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#guide{position:absolute;border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.5)}
+#guide{position:absolute;border-radius:12px;transition:left .08s,top .08s,width .08s,height .08s}
+#guide:not(.found){opacity:.35}#guide.none{display:none}#guide.found i{border-color:#2ecc71}#guide .zone{display:none}
 #guide i{position:absolute;width:30px;height:30px;border:4px solid #fff;border-radius:7px}
 #guide i:nth-child(1){left:-3px;top:-3px;border-right:0;border-bottom:0}#guide i:nth-child(2){right:-3px;top:-3px;border-left:0;border-bottom:0}
 #guide i:nth-child(3){left:-3px;bottom:-3px;border-right:0;border-top:0}#guide i:nth-child(4){right:-3px;bottom:-3px;border-left:0;border-top:0}
@@ -101,8 +102,8 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <div id="cam">
   <video id="v" playsinline muted autoplay></video>
   <div id="guide"><i></i><i></i><i></i><i></i><div class="zone zt"></div><div class="zone zb"></div></div>
-  <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Hold a card in the frame</span>
-    <button class="btn sm" id="sizeBtn">Frame M</button>
+  <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Lay a card anywhere in view</span>
+    <button class="btn sm hidden" id="zoomBtn">1×</button>
     <button class="btn sm" id="fastBtn" aria-pressed="true">⚡ Fast</button>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
     <button class="btn sm" id="setBtn" aria-label="Settings">⚙︎</button></div>
@@ -130,6 +131,9 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
     <label class="f"><input type="checkbox" id="autoSnap" checked> Snap automatically when the card is still</label>
     <label class="f"><input type="checkbox" id="beep" checked> Beep on a good read</label>
     <label class="f"><input type="checkbox" id="meterChk"> Show scan meter (for troubleshooting)</label>
+    <label class="f" for="sensSel">How the card stands out from your table</label>
+    <select class="field" id="sensSel"><option value="45">Low contrast (card on a similar color)</option><option value="70">Normal</option><option value="100">High contrast (busy or patterned table)</option></select>
+    <p class="hint">Best: a plain dark mat or a plain light table, with nothing else in view.</p>
     <p class="hint" style="margin-top:24px">Card data and pictures come from Scryfall. Reading happens on this device; nothing is sent anywhere except card lookups to Scryfall.</p>
   </div>
 </section>
@@ -146,7 +150,7 @@ const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.par
 function toast(t,ms){const el=$("toast");el.textContent=t;el.classList.remove("hidden");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.add("hidden"),ms||2600);}
 
 /* ---------- state ---------- */
-let opts=Object.assign({size:"M",meter:false,fast:true,foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
+let opts=Object.assign({sens:70,zoom:1,size:"M",meter:false,fast:true,foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
 let stack=ls.get("scan.stack",[]);let seq=stack.reduce((m,r)=>Math.max(m,r.k||0),0);
 const saveOpts=()=>ls.set("scan.opts",opts);
 const saveStack=()=>{if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,choices:r.choices?r.choices.slice(0,6):undefined}))))ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,thumb:undefined,choices:undefined})));};
@@ -278,44 +282,74 @@ function done(r,c,status,choices){
 
 /* ---------- camera + auto snap ---------- */
 const v=$("v");let stream=null,loopT=null;
-function rect(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight;
-  const visW=Math.min(vw,vh*bw/bh),visH=Math.min(vh,vw*bh/bw);const f={S:0.46,M:0.6,L:0.72}[opts.size]||0.6;const ch=Math.min(visH*f,visW*0.94*88/63),cw=ch*63/88;
-  return{x:(vw-cw)/2,y:(vh-ch)/2-visH*0.045,w:cw,h:ch};}
-function placeGuide(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight,k=Math.max(bw/vw,bh/vh);
-  const ox=(bw-vw*k)/2,oy=(bh-vh*k)/2,r=rect();Object.assign($("guide").style,{left:ox+r.x*k+"px",top:oy+r.y*k+"px",width:r.w*k+"px",height:r.h*k+"px"});}
+function vis(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight;const w=Math.min(vw,vh*bw/bh),h=Math.min(vh,vw*bh/bw);return{x:(vw-w)/2,y:(vh-h)/2,w,h};}
+function rect(){const V=vis();const ch=Math.min(V.h*0.6,V.w*0.9*88/63),cw=ch*63/88;return{x:V.x+(V.w-cw)/2,y:V.y+(V.h-ch)/2,w:cw,h:ch};}
+function toScreen(r){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight,k=Math.max(bw/vw,bh/vh);const ox=(bw-vw*k)/2,oy=(bh-vh*k)/2;return{left:ox+r.x*k+"px",top:oy+r.y*k+"px",width:r.w*k+"px",height:r.h*k+"px"};}
+function showBox(r,found){const g=$("guide");if(!r){g.classList.add("none");return;}g.classList.remove("none");g.classList.toggle("found",!!found);Object.assign(g.style,toScreen(r));}
+function placeGuide(){showBox(rect(),false);}
 addEventListener("resize",()=>setTimeout(placeGuide,200));
+/* find the card anywhere in view */
+const DW=120;const det=document.createElement("canvas");const dctx=det.getContext("2d",{willReadFrequently:true});let mask=null,seen=null,stackA=null;
+function detect(){
+  const V=vis();const DH=Math.round(DW*V.h/V.w);if(det.width!==DW||det.height!==DH){det.width=DW;det.height=DH;mask=new Uint8Array(DW*DH);seen=new Uint8Array(DW*DH);stackA=new Int32Array(DW*DH);}
+  dctx.drawImage(v,V.x,V.y,V.w,V.h,0,0,DW,DH);const a=dctx.getImageData(0,0,DW,DH).data;const N=DW*DH;
+  let br=0,bg=0,bb=0,bn=0;const ring=(x,y)=>{const o=(y*DW+x)*4;br+=a[o];bg+=a[o+1];bb+=a[o+2];bn++;};
+  for(let x=0;x<DW;x+=2){ring(x,1);ring(x,DH-2);}for(let y=0;y<DH;y+=2){ring(1,y);ring(DW-2,y);}br/=bn;bg/=bn;bb/=bn;
+  for(let i=0,o=0;i<N;i++,o+=4)mask[i]=(Math.abs(a[o]-br)+Math.abs(a[o+1]-bg)+Math.abs(a[o+2]-bb))>opts.sens?1:0;
+  seen.fill(0);let best=null;
+  for(let s0=0;s0<N;s0++){if(!mask[s0]||seen[s0])continue;let sp=0,cnt=0,x0=DW,y0=DH,x1=0,y1=0;stackA[sp++]=s0;seen[s0]=1;
+    while(sp){const q=stackA[--sp];cnt++;const x=q%DW,y=(q/DW)|0;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      if(x>0&&mask[q-1]&&!seen[q-1]){seen[q-1]=1;stackA[sp++]=q-1;}if(x<DW-1&&mask[q+1]&&!seen[q+1]){seen[q+1]=1;stackA[sp++]=q+1;}
+      if(y>0&&mask[q-DW]&&!seen[q-DW]){seen[q-DW]=1;stackA[sp++]=q-DW;}if(y<DH-1&&mask[q+DW]&&!seen[q+DW]){seen[q+DW]=1;stackA[sp++]=q+DW;}}
+    if(!best||cnt>best.cnt)best={cnt,x0,y0,x1,y1};}
+  if(!best||best.cnt<N*0.05)return{why:"no card in view"};
+  const bw=best.x1-best.x0+1,bh=best.y1-best.y0+1,fill=best.cnt/(bw*bh),asp=bw/bh;
+  if(best.x0<=1||best.y0<=1||best.x1>=DW-2||best.y1>=DH-2)return{why:"card touches the edge: back up a bit"};
+  if(asp<0.55||asp>0.92)return{why:asp>0.92?"card is sideways or a hand is in view":"card shape not clear"};
+  if(fill<0.6)return{why:"card edges not clear"};
+  const k=V.w/DW,pad=0.012;let x=V.x+best.x0*k,y=V.y+best.y0*k,w=bw*k,h=bh*k;x-=w*pad;y-=h*pad;w*=1+pad*2;h*=1+pad*2;
+  return{x,y,w,h,asp};
+}
 const small=document.createElement("canvas");small.width=40;small.height=56;const sctx=small.getContext("2d",{willReadFrequently:true});
-let prev=null,still=0,armed=true,lastSig=null,busy=0;
-function sig(){const r=rect();sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
+let prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
+function sigOf(r){sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
+const sig=()=>sigOf(rect());
 const dif=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;};
 const detail=a=>{let s=0;for(let y=0;y<56;y++)for(let x=1;x<40;x++)s+=Math.abs(a[y*40+x]-a[y*40+x-1]);return s/(56*39);};
 function msg(t){$("msg").textContent=t;}
-let lastT=-1,staleSince=0,floor=3;
+let staleSince=0,floor=3,frozenSig=null;
 function tick(){
   if(!stream)return;
   if(!ocrReady&&$("msg").textContent!=="Card reader still loading…")msg("Card reader still loading…");
   try{
   const tr=stream.getVideoTracks()[0];
   if(!tr||tr.readyState==="ended"){stopCam();showHome("The camera stopped. Tap Start scanning to keep going. Your stack is saved.");return;}
-  if(v.videoWidth){const g=sig();
-    if(prev&&dif(g,prev)<0.02){if(Date.now()-staleSince>15000){stopCam();showHome("The camera froze. Tap Start scanning to keep going. Your stack is saved.");return;}}else staleSince=Date.now();
-    const need=opts.fast?2:4;const calm=Math.max(opts.fast?7:5,floor*2.5);
-    if(prev){const m=dif(g,prev);if(m<floor*3)floor=floor*0.97+m*0.03;still=m<calm?still+1:0;const dt=detail(g);
-      if(opts.meter)$("meter").textContent=`motion ${m.toFixed(1)} (still under ${calm.toFixed(1)})\nstill ${still}/${need}  detail ${dt.toFixed(1)} (need 3.5)\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}`;
-      if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;msg("Next card…");}
-      if(opts.auto&&armed&&still>=need&&detail(g)>3.5&&busy<40)capture(g);
-      else if(!opts.fast&&armed&&still>=1&&still<need&&detail(g)>3.5)msg("Hold still…");}
-    prev=g;}
+  if(v.videoWidth){
+    const whole=sigOf(vis());if(frozenSig&&dif(whole,frozenSig)<0.02){if(Date.now()-staleSince>15000){stopCam();showHome("The camera froze. Tap Start scanning to keep going. Your stack is saved.");return;}}else staleSince=Date.now();frozenSig=whole;
+    const d=detect();const need=opts.fast?2:4;
+    if(!d.w){lost++;if(lost>4){showBox(null);prev=null;still=0;if(lastSig)armed=true;}if(!busy||lost===5)msg(lost>4&&d.why==="no card in view"?"Lay a card anywhere in view":"Looking… "+d.why);
+      if(opts.meter)$("meter").textContent=`no card: ${d.why}\nsensitivity ${opts.sens}\nvideo ${v.videoWidth}×${v.videoHeight}`;}
+    else{lost=0;const g=sigOf(d);let m=prev?dif(g,prev):99;
+      if(prevBox){m+=(Math.abs(d.x-prevBox.x)+Math.abs(d.y-prevBox.y)+Math.abs(d.w-prevBox.w))/d.w*120;}
+      const calm=Math.max(opts.fast?7:5,floor*2.5);if(prev&&m<floor*3)floor=floor*0.97+m*0.03;
+      still=m<calm?still+1:0;showBox(d,true);
+      if(!armed&&lastSig&&dif(g,lastSig)>13){armed=true;}
+      if(opts.meter)$("meter").textContent=`card found ${Math.round(d.w)}×${Math.round(d.h)}px\nmotion ${m.toFixed(1)} (still under ${calm.toFixed(1)})  still ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}`;
+      if(opts.auto&&armed&&still>=need&&busy<40)capture(g,d);
+      else if(armed&&!busy)msg(still?"Hold still…":"Card found");
+      prev=g;prevBox=d;}
+  }
   }catch(e){}
   loopT=setTimeout(tick,opts.fast?70:110);
 }
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
 let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
-async function capture(g){
-  armed=false;still=0;lastSig=g||sig();
-  const r0=rect();const card=document.createElement("canvas");card.width=630;card.height=880;
-  card.getContext("2d").drawImage(v,r0.x,r0.y,r0.w,r0.h,0,0,630,880);
-  flash("snap");msg("Reading…");
+async function capture(g,box){
+  if(!box){const d=detect();box=d.w?d:rect();}
+  armed=false;still=0;lastSig=g||sigOf(box);
+  const card=document.createElement("canvas");card.width=630;card.height=880;
+  card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
+  flash("snap");msg("Got it ✓ next card");
   const thumb=card.toDataURL("image/jpeg",0.6);
   const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
   stack.unshift(r);drawTiles();busy++;
@@ -327,7 +361,7 @@ async function capture(g){
     else msg(`✓ ${r.name}`);
     flash("good");beep(true);
   }else if(r.status==="pick"){flash("meh");beep(false);msg(`? ${r.name}: check it in the stack`);}
-  else{beep(false);msg("Couldn't read that one. Try again or check the stack.");}
+  else{beep(false);msg("Couldn't read that one. Check the stack.");}
   if(r.status!=="fail"&&r.img)r.thumb=await thumbFor(r.img);
   saveStack();drawTiles();
 }
@@ -337,8 +371,9 @@ async function startCam(){
   catch(e){$("startErr").textContent=e&&e.name==="NotAllowedError"?"Camera access was blocked. On iPhone/iPad: Settings › Safari › Camera › Allow, then reload.":"Couldn't open the camera: "+(e&&e.message||e);return;}
   v.srcObject=stream;try{await v.play();}catch(e){}
   v.onloadedmetadata=placeGuide;setTimeout(placeGuide,300);
-  prev=null;still=0;armed=true;lastT=-1;staleSince=Date.now();
-  $("start").classList.add("hidden");$("startErr").textContent="";msg("Hold a card in the frame");tick();
+  prev=null;prevBox=null;still=0;armed=true;staleSince=Date.now();frozenSig=null;
+  setupTrack();
+  $("start").classList.add("hidden");$("startErr").textContent="";msg("Lay a card anywhere in view");tick();
 }
 function stopCam(){clearTimeout(loopT);if(stream){stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});stream=null;}try{v.pause();v.srcObject=null;}catch(e){}}
 function showHome(note,ok){
@@ -432,17 +467,26 @@ $("sendBtn").onclick=async()=>{
 };
 
 /* ---------- settings ---------- */
-function syncSize(){$("sizeBtn").textContent="Frame "+opts.size;}
-$("sizeBtn").onclick=()=>{opts.size={S:"M",M:"L",L:"S"}[opts.size]||"M";saveOpts();syncSize();placeGuide();toast({S:"Small frame: hold the card farther away.",M:"Medium frame.",L:"Large frame: hold the card close."}[opts.size]);};
+let zoomCaps=null;
+function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;$("zoomBtn").classList.add("hidden");if(!tr||!tr.getCapabilities)return;
+  let c={};try{c=tr.getCapabilities()||{};}catch(e){}
+  const adv={};if(Array.isArray(c.focusMode)&&c.focusMode.includes("continuous"))adv.focusMode="continuous";
+  if(Array.isArray(c.exposureMode)&&c.exposureMode.includes("continuous"))adv.exposureMode="continuous";
+  if(c.zoom&&c.zoom.max>1){zoomCaps=c.zoom;$("zoomBtn").classList.remove("hidden");adv.zoom=Math.min(Math.max(opts.zoom||1,c.zoom.min||1),c.zoom.max);}
+  if(Object.keys(adv).length)tr.applyConstraints({advanced:[adv]}).catch(()=>{});syncZoom();}
+function syncZoom(){$("zoomBtn").textContent=(opts.zoom||1)+"×";}
+$("zoomBtn").onclick=()=>{if(!zoomCaps)return;const steps=[1,1.5,2,3].filter(z=>z<=zoomCaps.max+0.01);const i=steps.indexOf(opts.zoom);opts.zoom=steps[(i+1)%steps.length]||1;saveOpts();syncZoom();
+  const tr=stream&&stream.getVideoTracks()[0];if(tr)tr.applyConstraints({advanced:[{zoom:opts.zoom}]}).catch(()=>toast("Zoom isn't available on this camera."));toast(opts.zoom>1?"Zoomed in: hold the iPad higher, where it focuses sharper.":"Zoom off.");};
+function syncSize(){}
 function syncFast(){$("fastBtn").setAttribute("aria-pressed",opts.fast);$("fastBtn").textContent=opts.fast?"⚡ Fast":"Steady";}
 $("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.fast?"Fast: snaps the moment a new card lands. Good for dropping cards on a pile.":"Steady: waits for the card to be held still. Fewer blurry snaps.");};
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
-$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
-$("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("settings").classList.remove("hidden");};
+$("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
+$("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
-  opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
+  opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;opts.sens=+$("sensSel").value||70;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
 syncSize();syncFast();syncFoil();drawTiles();showHome();$("meter").classList.toggle("hidden",!opts.meter);
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 })();
