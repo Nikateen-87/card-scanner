@@ -121,6 +121,21 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <footer><button class="btn" id="clearBtn">Clear stack</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
 </section>
 
+<section class="sheet hidden" id="sent" aria-labelledby="sentHead">
+  <header><h2 id="sentHead">Copied</h2></header>
+  <div class="body">
+    <ol style="font-size:17px;line-height:1.6;padding-left:22px;margin:0 0 14px">
+      <li>Open your <b>Card Binder</b> in the <b>Claude app</b> (or Safari where you're signed in to claude.ai).</li>
+      <li>Tap <b>📷 Scan cards</b>, then <b>📋 Paste from scanner</b>.</li>
+      <li>Tap and hold in the dashed box, tap <b>Paste</b>.</li>
+      <li>Check the list and tap <b>Save to binder</b>.</li>
+    </ol>
+    <p class="hint">If Paste shows nothing, come back here and tap Copy again. You can also tap in the box below, Select All, and Copy.</p>
+    <textarea class="field" id="sentText" readonly rows="3" style="font-size:12px"></textarea>
+  </div>
+  <footer><button class="btn" id="sentCopy">Copy again</button><button class="btn" id="sentOpen">Open my binder</button><button class="btn primary" id="sentDone">Done</button></footer>
+</section>
+
 <section class="sheet hidden" id="settings" aria-labelledby="setTitle">
   <header><h2 id="setTitle">Settings</h2><button class="btn sm" id="setClose">Done</button></header>
   <div class="body">
@@ -469,22 +484,28 @@ $("clearSentBtn").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawSt
 $("clearBtn").onclick=()=>{if(!stack.length)return;if(confirm("Clear every card from this stack? Send them to your binder first if you haven't.")){stack=[];saveStack();drawStack();drawTiles();}};
 
 /* ---------- send to binder ---------- */
+let sendText="";
+async function copyText(text){
+  try{await navigator.clipboard.writeText(text);return true;}catch(e){}
+  try{const ta=$("sentText");ta.value=text;ta.removeAttribute("readonly");ta.focus();ta.select();ta.setSelectionRange(0,text.length);const ok=document.execCommand("copy");ta.setAttribute("readonly","");return ok;}catch(e){return false;}
+}
 $("sendBtn").onclick=async()=>{
-  const rows=stack.filter(r=>r.status==="ok"||r.status==="pick");if(!rows.length)return;
-  const unsure=rows.filter(r=>r.status==="pick").length;
+  const rows=stack.filter(r=>r.status==="ok"||r.status==="pick");
+  if(!rows.length){toast(stack.length?"Nothing ready to send: fix the red cards first (Wrong card) or remove them.":"Your stack is empty.",4500);return;}
+  const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status==="pick").length;
   const payload={v:1,from:"card-scanner",at:new Date().toISOString(),cards:rows.map(r=>({name:r.name,set:r.set,setName:r.setName,num:r.num,foil:!!r.foil,qty:r.qty,rarity:r.rarity,price:r.price,cond:r.cond||"NM",notes:r.notes||"",lang:r.lang||"English",img:r.img||"",thumb:r.thumb||""}))};
-  const text="CBSCAN1:"+JSON.stringify(payload);
-  let copied=false;try{await navigator.clipboard.writeText(text);copied=true;}catch(e){}
-  if(!copied){try{const ta=document.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();ta.setSelectionRange(0,text.length);copied=document.execCommand("copy");ta.remove();}catch(e){}}
-  if(!copied){toast("Couldn't copy. Try again.");return;}
-  rows.forEach(r=>r.sent=true);ls.set("scan.lastSent",Date.now());
-  toast(`Copied ${total()} cards${unsure?` (${unsure} unsure)`:""}. In your binder: Scan cards › Paste from scanner.`,5000);
-  saveStack();stopCam();
-  showHome(`Copied ${rows.reduce((s,r)=>s+r.qty,0)} cards. In your binder: Scan cards › 📋 Paste from scanner › Save. Then come back and tap Clear sent cards.`,true);
-  if(opts.binder){const w=window.open(opts.binder,"_blank");if(w){try{w.opener=null;}catch(e){}}else location.href=opts.binder;}
-  else toast("Add your binder link in ⚙︎ Settings so this opens it for you next time.",5000);
+  sendText="CBSCAN1:"+JSON.stringify(payload);$("sentText").value=sendText;
+  const copied=await copyText(sendText);
+  stopCam();$("stack").classList.add("hidden");$("start").classList.add("hidden");
+  $("sentHead").textContent=copied?`✓ Copied ${n} card${n===1?"":"s"}${unsure?` (${unsure} unsure)`:""}`:"Tap Copy, then follow the steps";
+  $("sentHead").className=copied?"okc":"warn";
+  $("sentOpen").classList.toggle("hidden",!opts.binder);
+  $("sent").classList.remove("hidden");
+  if(copied){rows.forEach(r=>r.sent=true);saveStack();}
+  $("sentCopy").onclick=async()=>{const ok=await copyText(sendText);toast(ok?"Copied again.":"Couldn't copy. Tap in the box, Select All, then Copy.",3500);if(ok){rows.forEach(r=>r.sent=true);saveStack();$("sentHead").textContent=`✓ Copied ${n} card${n===1?"":"s"}`;$("sentHead").className="okc";}};
 };
-
+$("sentOpen").onclick=()=>{if(opts.binder){const w=window.open(opts.binder,"_blank");if(!w)location.href=opts.binder;}};
+$("sentDone").onclick=()=>{$("sent").classList.add("hidden");showHome();};
 /* ---------- settings ---------- */
 let zoomCaps=null;
 function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;$("zoomBtn").classList.add("hidden");if(!tr||!tr.getCapabilities)return;
