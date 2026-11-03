@@ -152,7 +152,7 @@ function toast(t,ms){const el=$("toast");el.textContent=t;el.classList.remove("h
 
 /* ---------- state ---------- */
 let opts=Object.assign({sens:70,zoom:1,size:"M",meter:false,fast:true,foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
-let stack=ls.get("scan.stack",[]);let seq=stack.reduce((m,r)=>Math.max(m,r.k||0),0);
+let stack=ls.get("scan.stack",[]);stack.forEach(r=>{if(r.status==="work"){r.status="fail";r.why="This scan was interrupted. Tap Wrong card to search it, or remove it and scan again.";}});let seq=stack.reduce((m,r)=>Math.max(m,r.k||0),0);
 const saveOpts=()=>ls.set("scan.opts",opts);
 const saveStack=()=>{if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,choices:r.choices?r.choices.slice(0,6):undefined}))))ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,thumb:undefined,choices:undefined})));};
 
@@ -160,7 +160,8 @@ const saveStack=()=>{if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,c
 let lastCall=0;
 async function sf(path){
   const wait=Math.max(0,lastCall+110-Date.now());if(wait)await new Promise(r=>setTimeout(r,wait));lastCall=Date.now();
-  try{const r=await fetch("https://api.scryfall.com"+path,{headers:{Accept:"application/json"}});if(!r.ok)return null;return await r.json();}catch(e){return null;}
+  const ac=new AbortController();const to=setTimeout(()=>ac.abort(),8000);
+  try{const r=await fetch("https://api.scryfall.com"+path,{headers:{Accept:"application/json"},signal:ac.signal});if(!r.ok)return null;return await r.json();}catch(e){return null;}finally{clearTimeout(to);}
 }
 const faceImg=(c,v)=>(c.image_uris&&c.image_uris[v])||(c.card_faces&&c.card_faces[0]&&c.card_faces[0].image_uris&&c.card_faces[0].image_uris[v])||"";
 function binderName(c){
@@ -226,7 +227,7 @@ function vecFrom(src,sx,sy,sw,sh){const g=vecG;g.clearRect(0,0,24,33);
   for(let i=0;i<a.length;i+=4){v[k++]=a[i];v[k++]=a[i+1];v[k++]=a[i+2];}
   let m=0;for(const x of v)m+=x;m/=v.length;let s=0;for(let i=0;i<v.length;i++){v[i]-=m;s+=v[i]*v[i];}s=Math.sqrt(s)||1;for(let i=0;i<v.length;i++)v[i]/=s;return v;}
 const corr=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;};
-function loadImg(url){return new Promise(res=>{const i=new Image();i.crossOrigin="anonymous";i.onload=()=>res(i);i.onerror=()=>res(null);i.src=url;});}
+function loadImg(url){return new Promise(res=>{const i=new Image();i.crossOrigin="anonymous";const t=setTimeout(()=>{i.src="";res(null);},6000);i.onload=()=>{clearTimeout(t);res(i);};i.onerror=()=>{clearTimeout(t);res(null);};i.src=url;});}
 async function bestByImage(capVec,cards){
   const scored=[];
   for(const c of cards.slice(0,36)){const u=faceImg(c,"small");if(!u)continue;const im=await loadImg(u);if(!im)continue;
@@ -370,7 +371,7 @@ async function capture(g,box){
   const thumb=card.toDataURL("image/jpeg",0.6);
   const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
   stack.unshift(r);drawTiles();busy++;
-  try{await serial(()=>identify(r,card));}catch(e){r.status="fail";r.why="Something went wrong reading this card.";}
+  try{await serial(()=>Promise.race([identify(r,card),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
   finally{busy--;card.width=0;card.height=0;}
   if(r.status==="ok"){
     const dup=stack.find(x=>x!==r&&x.status==="ok"&&x.id===r.id&&x.foil===r.foil);
