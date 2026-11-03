@@ -382,7 +382,7 @@ async function capture(g,box){
   if(r.status!=="fail"&&r.img)r.thumb=await thumbFor(r.img);
   saveStack();drawTiles();if(!$("stack").classList.contains("hidden"))drawStack();
 }
-async function thumbFor(url){const im=await loadImg(url);if(!im)return"";try{const c=document.createElement("canvas");c.width=336;c.height=Math.round(336*im.naturalHeight/im.naturalWidth);c.getContext("2d").drawImage(im,0,0,c.width,c.height);const u=c.toDataURL("image/jpeg",0.78);c.width=0;c.height=0;return u;}catch(e){return"";}}
+async function thumbFor(url){const im=await loadImg(url);if(!im)return"";try{const c=document.createElement("canvas");c.width=244;c.height=Math.round(244*im.naturalHeight/im.naturalWidth);c.getContext("2d").drawImage(im,0,0,c.width,c.height);const u=c.toDataURL("image/jpeg",0.72);c.width=0;c.height=0;return u;}catch(e){return"";}}
 async function startCam(){
   try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:3840},height:{ideal:2160}},audio:false});}
   catch(e){$("startErr").textContent=e&&e.name==="NotAllowedError"?"Camera access was blocked. On iPhone/iPad: Settings › Safari › Camera › Allow, then reload.":"Couldn't open the camera: "+(e&&e.message||e);return;}
