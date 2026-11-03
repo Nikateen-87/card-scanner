@@ -325,11 +325,11 @@ function detect(){
   return{x,y,w,h,asp};
 }
 const small=document.createElement("canvas");small.width=40;small.height=56;const sctx=small.getContext("2d",{willReadFrequently:true});
-let prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
+let smooth=null,prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
 function sigOf(r){sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
 const sig=()=>sigOf(rect());
 const coarseC=document.createElement("canvas");coarseC.width=8;coarseC.height=11;const coarseG=coarseC.getContext("2d",{willReadFrequently:true});
-function idSig(r){coarseG.imageSmoothingQuality="high";coarseG.drawImage(v,r.x+r.w*0.08,r.y+r.h*0.08,r.w*0.84,r.h*0.84,0,0,8,11);const d=coarseG.getImageData(0,0,8,11).data;const g=new Float32Array(264);for(let i=0,k=0;i<d.length;i+=4){g[k++]=d[i];g[k++]=d[i+1];g[k++]=d[i+2];}return g;}
+function idSig(r){coarseG.imageSmoothingQuality="high";coarseG.drawImage(v,r.x+r.w*0.08,r.y+r.h*0.08,r.w*0.84,r.h*0.84,0,0,8,11);const d=coarseG.getImageData(0,0,8,11).data;const g=new Float32Array(264);let m=0;for(let i=0,k=0;i<d.length;i+=4){g[k++]=d[i];g[k++]=d[i+1];g[k++]=d[i+2];m+=d[i]+d[i+1]+d[i+2];}m=m/264||1;for(let k=0;k<264;k++)g[k]=g[k]/m*110;return g;}
 const dif=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;};
 const detail=a=>{let s=0;for(let y=0;y<56;y++)for(let x=1;x<40;x++)s+=Math.abs(a[y*40+x]-a[y*40+x-1]);return s/(56*39);};
 function msg(t){$("msg").textContent=t;}
@@ -342,15 +342,20 @@ function tick(){
   if(!tr||tr.readyState==="ended"){stopCam();showHome("The camera stopped. Tap Start scanning to keep going. Your stack is saved.");return;}
   if(v.videoWidth){
     const whole=sigOf(vis());if(frozenSig&&dif(whole,frozenSig)<0.02){if(Date.now()-staleSince>15000){stopCam();showHome("The camera froze. Tap Start scanning to keep going. Your stack is saved.");return;}}else staleSince=Date.now();frozenSig=whole;
-    const d=detect();const need=opts.fast?2:4;
-    if(!d.w){lost++;if(lost>4){showBox(null);prev=null;still=0;if(lastSig)armed=true;}if(!busy||lost===5)msg(lost>4&&d.why==="no card in view"?"Lay a card anywhere in view":"Looking… "+d.why);
+    const d=detect();const need=opts.fast?3:6;
+    if(!d.w){lost++;if(lost>4){showBox(null);prev=null;prevBox=null;smooth=null;still=0;if(lastSig)armed=true;}if(!busy||lost===5)msg(lost>4&&d.why==="no card in view"?"Lay a card anywhere in view":"Looking… "+d.why);
       if(opts.meter)$("meter").textContent=`no card: ${d.why}\nsensitivity ${opts.sens}\nvideo ${v.videoWidth}×${v.videoHeight}`;}
-    else{lost=0;const g=idSig(d);let m=prevWhole?dif(whole,prevWhole):99;
-      const calm=Math.max(opts.fast?4:3,floor*2.5);if(prevWhole&&m<floor*3)floor=floor*0.97+m*0.03;
-      still=m<calm?still+1:0;showBox(d,true);
+    else{lost=0;const g=idSig(d);
+      // steady = the card stays in the same place and its picture isn't changing (a hand over it would change it)
+      const shift=prevBox?Math.max(Math.abs((d.x+d.w/2)-(prevBox.x+prevBox.w/2)),Math.abs((d.y+d.h/2)-(prevBox.y+prevBox.h/2)),Math.abs(d.w-prevBox.w))/d.w:1;
+      const look=prev?dif(g,prev):99;
+      const steady=shift<0.06&&look<14;
+      still=steady?still+1:0;
+      smooth=smooth&&shift<0.15?{x:smooth.x*0.6+d.x*0.4,y:smooth.y*0.6+d.y*0.4,w:smooth.w*0.6+d.w*0.4,h:smooth.h*0.6+d.h*0.4}:d;
+      showBox(smooth,true);
       if(!armed&&lastSig&&dif(g,lastSig)>22){armed=true;}
-      if(opts.meter)$("meter").textContent=`card found ${Math.round(d.w)}×${Math.round(d.h)}px\nmotion ${m.toFixed(1)} (still under ${calm.toFixed(1)})  still ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}`;
-      if(opts.auto&&armed&&still>=need&&busy<40)capture(g,d);
+      if(opts.meter)$("meter").textContent=`card found ${Math.round(d.w)}×${Math.round(d.h)}px\nmoved ${(shift*100).toFixed(0)}% (need under 6)  changed ${look.toFixed(1)} (need under 14)\nsteady ${still}/${need}  ready ${armed?"yes":"no: swap card"}\nreader ${ocrReady?"on":"loading"}  video ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
+      if(opts.auto&&armed&&still>=need&&busy<40)capture(g,smooth);
       else if(armed&&!busy)msg(still?"Hold still…":"Card found");
       prev=g;prevBox=d;}
     prevWhole=whole;
