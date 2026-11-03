@@ -380,7 +380,7 @@ async function capture(g,box){
   }else if(r.status==="pick"){flash("meh");beep(false);msg(`? ${r.name}: check it in the stack`);}
   else{beep(false);msg("Couldn't read that one. Check the stack.");}
   if(r.status!=="fail"&&r.img)r.thumb=await thumbFor(r.img);
-  saveStack();drawTiles();
+  saveStack();drawTiles();if(!$("stack").classList.contains("hidden"))drawStack();
 }
 async function thumbFor(url){const im=await loadImg(url);if(!im)return"";try{const c=document.createElement("canvas");c.width=336;c.height=Math.round(336*im.naturalHeight/im.naturalWidth);c.getContext("2d").drawImage(im,0,0,c.width,c.height);const u=c.toDataURL("image/jpeg",0.78);c.width=0;c.height=0;return u;}catch(e){return"";}}
 async function startCam(){
@@ -404,9 +404,9 @@ function showHome(note,ok){
 }
 $("go").onclick=startCam;
 $("homeBtn").onclick=()=>{stopCam();showHome();};
-$("homeStack").onclick=()=>{drawStack();$("stack").classList.remove("hidden");};
+$("homeStack").onclick=()=>{backToCam=false;drawStack();$("stack").classList.remove("hidden");};
 $("homeSend").onclick=()=>$("sendBtn").click();
-$("homeSet").onclick=()=>$("setBtn").click();
+$("homeSet").onclick=()=>{$("setBtn").click();backToCam=false;};
 $("homeClear").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawTiles();showHome();};
 document.addEventListener("visibilitychange",()=>{if(document.hidden&&stream){stopCam();showHome("Camera paused while you were away. Tap Start scanning to keep going. Your stack is saved.");}});
 addEventListener("pagehide",stopCam);
@@ -440,8 +440,9 @@ function drawStack(){
   $("sendBtn").disabled=!stack.some(r=>r.status==="ok"||r.status==="pick");$("clearSentBtn").classList.toggle("hidden",!stack.some(r=>r.sent));
   $("stackTitle").textContent=`Stack · ${total()} card${total()===1?"":"s"}`;
 }
-$("stackBtn").onclick=()=>{drawStack();$("stack").classList.remove("hidden");};
-$("stackClose").onclick=()=>{$("stack").classList.add("hidden");drawTiles();if(!stream)showHome();};
+let backToCam=false;
+$("stackBtn").onclick=()=>{backToCam=!!stream;stopCam();drawStack();$("stack").classList.remove("hidden");};
+$("stackClose").onclick=()=>{$("stack").classList.add("hidden");drawTiles();if(backToCam){backToCam=false;startCam();}else showHome();};
 $("stackBody").addEventListener("click",async e=>{
   const b=e.target.closest("[data-a]");if(!b||b.tagName==="INPUT")return;const k=+b.closest(".card").dataset.k;const r=stack.find(x=>x.k===k);if(!r)return;
   const a=b.dataset.a;
@@ -502,8 +503,8 @@ function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilB
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
 $("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
-$("setBtn").onclick=()=>{$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
-$("setClose").onclick=()=>{setTimeout(()=>{if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
+$("setBtn").onclick=()=>{backToCam=!!stream;stopCam();$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
+$("setClose").onclick=()=>{setTimeout(()=>{if(backToCam){backToCam=false;startCam();}else if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;opts.sens=+$("sensSel").value||70;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
 syncSize();syncFast();syncFoil();drawTiles();showHome();$("meter").classList.toggle("hidden",!opts.meter);
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
