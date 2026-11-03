@@ -29,7 +29,7 @@ button{font:inherit;color:inherit}
 #cam{position:fixed;inset:0;overflow:hidden;background:#000}
 #cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 #guide{position:absolute;border-radius:12px;transition:left .08s,top .08s,width .08s,height .08s}
-#guide:not(.found){opacity:.35}#guide.none{display:none}#guide.found i{border-color:#2ecc71}#guide .zone{display:none}
+#guide{box-shadow:0 0 0 9999px rgba(0,0,0,.45);border:2px solid rgba(255,255,255,.6)}#guide.none{display:none}#guide.found{border-color:#2ecc71}#guide.found i{border-color:#2ecc71}#guide .zone{display:none}
 #guide i{position:absolute;width:30px;height:30px;border:4px solid #fff;border-radius:7px}
 #guide i:nth-child(1){left:-3px;top:-3px;border-right:0;border-bottom:0}#guide i:nth-child(2){right:-3px;top:-3px;border-left:0;border-bottom:0}
 #guide i:nth-child(3){left:-3px;bottom:-3px;border-right:0;border-top:0}#guide i:nth-child(4){right:-3px;bottom:-3px;border-left:0;border-top:0}
@@ -102,7 +102,8 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <div id="cam">
   <video id="v" playsinline muted autoplay></video>
   <div id="guide"><i></i><i></i><i></i><i></i><div class="zone zt"></div><div class="zone zb"></div></div>
-  <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Lay a card anywhere in view</span>
+  <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Put a card in the green frame</span>
+    <button class="btn sm" id="sizeBtn">Frame M</button>
     <button class="btn sm hidden" id="zoomBtn">1×</button>
     <button class="btn sm" id="fastBtn" aria-pressed="true">⚡ Fast</button>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
@@ -283,7 +284,7 @@ function done(r,c,status,choices){
 /* ---------- camera + auto snap ---------- */
 const v=$("v");let stream=null,loopT=null;
 function vis(){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight;const w=Math.min(vw,vh*bw/bh),h=Math.min(vh,vw*bh/bw);return{x:(vw-w)/2,y:(vh-h)/2,w,h};}
-function rect(){const V=vis();const ch=Math.min(V.h*0.6,V.w*0.9*88/63),cw=ch*63/88;return{x:V.x+(V.w-cw)/2,y:V.y+(V.h-ch)/2,w:cw,h:ch};}
+function rect(){const V=vis();const f={S:0.45,M:0.6,L:0.75}[opts.size]||0.6;const ch=Math.min(V.h*f,V.w*0.92*88/63),cw=ch*63/88;return{x:V.x+(V.w-cw)/2,y:V.y+(V.h-ch)/2,w:cw,h:ch};}
 function toScreen(r){const vw=v.videoWidth||1280,vh=v.videoHeight||720,bw=innerWidth,bh=innerHeight,k=Math.max(bw/vw,bh/vh);const ox=(bw-vw*k)/2,oy=(bh-vh*k)/2;return{left:ox+r.x*k+"px",top:oy+r.y*k+"px",width:r.w*k+"px",height:r.h*k+"px"};}
 function showBox(r,found){const g=$("guide");if(!r){g.classList.add("none");return;}g.classList.remove("none");g.classList.toggle("found",!!found);Object.assign(g.style,toScreen(r));}
 function placeGuide(){showBox(rect(),false);}
@@ -325,7 +326,7 @@ function detect(){
   return{x,y,w,h,asp};
 }
 const small=document.createElement("canvas");small.width=40;small.height=56;const sctx=small.getContext("2d",{willReadFrequently:true});
-let smooth=null,prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
+let hold=0,smooth=null,prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
 function sigOf(r){sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
 const sig=()=>sigOf(rect());
 const coarseC=document.createElement("canvas");coarseC.width=8;coarseC.height=11;const coarseG=coarseC.getContext("2d",{willReadFrequently:true});
@@ -342,22 +343,17 @@ function tick(){
   if(!tr||tr.readyState==="ended"){stopCam();showHome("The camera stopped. Tap Start scanning to keep going. Your stack is saved.");return;}
   if(v.videoWidth){
     const whole=sigOf(vis());if(frozenSig&&dif(whole,frozenSig)<0.02){if(Date.now()-staleSince>15000){stopCam();showHome("The camera froze. Tap Start scanning to keep going. Your stack is saved.");return;}}else staleSince=Date.now();frozenSig=whole;
-    const d=detect();const need=opts.fast?3:6;
-    if(!d.w){lost++;if(lost>4){showBox(null);prev=null;prevBox=null;smooth=null;still=0;if(lastSig)armed=true;}if(!busy||lost===5)msg(lost>4&&d.why==="no card in view"?"Lay a card anywhere in view":"Looking… "+d.why);
-      if(opts.meter)$("meter").textContent=`no card: ${d.why}\nsensitivity ${opts.sens}\nvideo ${v.videoWidth}×${v.videoHeight}`;}
-    else{lost=0;const g=idSig(d);
-      // steady = the card stays in the same place and its picture isn't changing (a hand over it would change it)
-      const shift=prevBox?Math.max(Math.abs((d.x+d.w/2)-(prevBox.x+prevBox.w/2)),Math.abs((d.y+d.h/2)-(prevBox.y+prevBox.h/2)),Math.abs(d.w-prevBox.w))/d.w:1;
-      const look=prev?dif(g,prev):99;
-      const steady=shift<0.06&&look<14;
-      still=steady?still+1:0;
-      smooth=smooth&&shift<0.15?{x:smooth.x*0.6+d.x*0.4,y:smooth.y*0.6+d.y*0.4,w:smooth.w*0.6+d.w*0.4,h:smooth.h*0.6+d.h*0.4}:d;
-      showBox(smooth,true);
-      if(!armed&&lastSig&&dif(g,lastSig)>22){armed=true;}
-      if(opts.meter)$("meter").textContent=`card found ${Math.round(d.w)}×${Math.round(d.h)}px\nmoved ${(shift*100).toFixed(0)}% (need under 6)  changed ${look.toFixed(1)} (need under 14)\nsteady ${still}/${need}  ready ${armed?"yes":"no: swap card"}\nreader ${ocrReady?"on":"loading"}  video ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
-      if(opts.auto&&armed&&still>=need&&busy<40)capture(g,smooth);
-      else if(armed&&!busy)msg(still?"Hold still…":"Card found");
-      prev=g;prevBox=d;}
+    const need=opts.fast?3:6;const F=rect();const d=detect();
+    const ov=(a,b)=>Math.max(0,Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y));
+    const seenNow=!!d.w&&ov(d,F)>F.w*F.h*0.45&&d.w<F.w*1.35;hold=seenNow?8:Math.max(0,hold-1);const inside=hold>0;
+    const g=idSig(F);const look=prev?dif(g,prev):99;const steady=look<14;still=steady&&inside?still+1:0;
+    showBox(F,inside);
+    if(lastSig&&!armed&&dif(g,lastSig)>22)armed=true;
+    if(opts.meter)$("meter").textContent=`${inside?"card in frame":"no card in frame"+(d.why?": "+d.why:"")}\nchanged ${look.toFixed(1)} (need under 14)  steady ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
+    if(!inside){if(!busy)msg("Put a card in the green frame");}
+    else if(opts.auto&&armed&&still>=need&&busy<40){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;capture(g,box);}
+    else if(armed&&!busy)msg("Hold still…");
+    prev=g;
     prevWhole=whole;
   }
   }catch(e){}
@@ -366,8 +362,8 @@ function tick(){
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
 let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
 async function capture(g,box){
-  if(!box){const d=detect();box=d.w?d:rect();}
-  armed=false;still=0;lastSig=g||idSig(box);
+  if(!box){const F=rect(),d=detect();box=d.w&&d.x>=F.x-F.w*0.1&&d.x+d.w<=F.x+F.w*1.1&&d.y>=F.y-F.h*0.1&&d.y+d.h<=F.y+F.h*1.1?d:F;}
+  armed=false;still=0;lastSig=g||idSig(rect());
   const card=document.createElement("canvas");card.width=630;card.height=880;
   card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
   flash("snap");msg("Got it ✓ next card");
@@ -394,7 +390,7 @@ async function startCam(){
   v.onloadedmetadata=placeGuide;setTimeout(placeGuide,300);
   prevWhole=null;prev=null;prevBox=null;still=0;armed=true;staleSince=Date.now();frozenSig=null;
   setupTrack();
-  $("start").classList.add("hidden");$("startErr").textContent="";msg("Lay a card anywhere in view");tick();
+  $("start").classList.add("hidden");$("startErr").textContent="";msg("Put a card in the green frame");tick();
 }
 function stopCam(){clearTimeout(loopT);if(stream){stream.getTracks().forEach(t=>{try{t.stop();}catch(e){}});stream=null;}try{v.pause();v.srcObject=null;}catch(e){}}
 function showHome(note,ok){
@@ -498,7 +494,8 @@ function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;
 function syncZoom(){$("zoomBtn").textContent=(opts.zoom||1)+"×";}
 $("zoomBtn").onclick=()=>{if(!zoomCaps)return;const steps=[1,1.5,2,3].filter(z=>z<=zoomCaps.max+0.01);const i=steps.indexOf(opts.zoom);opts.zoom=steps[(i+1)%steps.length]||1;saveOpts();syncZoom();
   const tr=stream&&stream.getVideoTracks()[0];if(tr)tr.applyConstraints({advanced:[{zoom:opts.zoom}]}).catch(()=>toast("Zoom isn't available on this camera."));toast(opts.zoom>1?"Zoomed in: hold the iPad higher, where it focuses sharper.":"Zoom off.");};
-function syncSize(){}
+function syncSize(){$("sizeBtn").textContent="Frame "+opts.size;}
+$("sizeBtn").onclick=()=>{opts.size={S:"M",M:"L",L:"S"}[opts.size]||"M";saveOpts();syncSize();placeGuide();toast({S:"Small frame: hold the iPad higher.",M:"Medium frame.",L:"Large frame: hold the iPad lower."}[opts.size]);};
 function syncFast(){$("fastBtn").setAttribute("aria-pressed",opts.fast);$("fastBtn").textContent=opts.fast?"⚡ Fast":"Steady";}
 $("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.fast?"Fast: snaps the moment a new card lands. Good for dropping cards on a pile.":"Steady: waits for the card to be held still. Fewer blurry snaps.");};
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
