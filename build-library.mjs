@@ -82,6 +82,23 @@ function rowOf(c, face) {
     p.usd ? +p.usd : null, p.usd_foil ? +p.usd_foil : (p.usd_etched ? +p.usd_etched : null), img.replace("https://cards.scryfall.io/", "").replace(/\?.*$/, ""), c.printed_size || 0];
 }
 
+// Read a huge JSON array of cards one card at a time (the file is too big to load in one piece)
+async function* streamCards(url) {
+  const r = await fetch(url, { headers: { "User-Agent": UA["User-Agent"] } });
+  if (!r.ok) throw new Error("Couldn't download card data: " + r.status);
+  const dec = new TextDecoder(); let buf = "", pos = 0, depth = 0, inStr = false, esc = false, start = -1, n = 0;
+  for await (const chunk of r.body) {
+    buf += dec.decode(chunk, { stream: true });
+    for (; pos < buf.length; pos++) { const ch = buf[pos];
+      if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === "{") { if (depth === 0) start = pos; depth++; }
+      else if (ch === "}") { depth--; if (depth === 0 && start >= 0) { yield JSON.parse(buf.slice(start, pos + 1)); n++; start = -1; } }
+    }
+    const keep = start >= 0 ? start : pos; buf = buf.slice(keep); pos -= keep; if (start >= 0) start -= keep;
+  }
+  console.log("Cards read:", n);
+}
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   // previous build (reuse its fingerprints)
@@ -91,10 +108,9 @@ async function main() {
 
   const bulk = await getJSON("https://api.scryfall.com/bulk-data");
   const def = bulk.data.find(b => b.type === "default_cards");
-  console.log("Downloading Scryfall card data…");
-  const all = await getJSON(def.download_uri);
+  console.log("Downloading Scryfall card data (read piece by piece; the file is very large)…");
   const sets = {}; const jobs = [];
-  for (const c of all) {
+  for await (const c of streamCards(def.download_uri)) {
     if (c.digital || c.lang !== "en" || c.set_type === "memorabilia" && c.layout !== "art_series") continue;
     const faces = (!c.image_uris && c.card_faces && c.card_faces[0].image_uris) ? c.card_faces.map((_, i) => i) : [0];
     for (const fi of faces) { const row = rowOf(c, fi); if (!row[10]) continue; sets[c.set] = c.set_name; jobs.push(row); }
