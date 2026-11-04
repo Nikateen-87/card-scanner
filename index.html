@@ -93,11 +93,11 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <h1>Card Scanner</h1>
   <p id="homeNote">Hold each card in the frame. It snaps on its own, reads the card, checks it against Scryfall and flashes green. When the stack is done, send it to your Card Binder.</p>
   <button class="btn primary" id="go" style="min-width:240px;min-height:58px;font-size:19px">📷 Start scanning</button>
-  <div class="homerow"><button class="btn" id="homeStack">Stack</button><button class="btn" id="homeSend">Send to binder</button><button class="btn" id="homeSet" aria-label="Settings">⚙︎</button></div>
+  <div class="homerow"><button class="btn" id="homeStack">Stack</button><button class="btn" id="homeSend">Send to Claude</button><button class="btn" id="homeSet" aria-label="Settings">⚙︎</button></div>
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 21 · Nov 3 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 22 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -119,7 +119,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <section class="sheet hidden" id="stack" aria-labelledby="stackTitle">
   <header><h2 id="stackTitle">Stack</h2><button class="btn sm" id="stackClose">Back</button></header>
   <div class="body" id="stackBody"></div>
-  <footer><button class="btn" id="clearBtn">Clear stack</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
+  <footer><button class="btn" id="clearBtn">Clear</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn" id="sendBtn">Paste to binder</button><button class="btn primary" id="claudeBtn">Send to Claude</button></footer>
 </section>
 
 <section class="sheet hidden" id="sent" aria-labelledby="sentHead">
@@ -484,7 +484,7 @@ function showHome(note,ok){
 $("go").onclick=startCam;
 $("homeBtn").onclick=()=>{stopCam();showHome();};
 $("homeStack").onclick=()=>{backToCam=false;drawStack();$("stack").classList.remove("hidden");};
-$("homeSend").onclick=()=>$("sendBtn").click();
+$("homeSend").onclick=()=>$("claudeBtn").click();
 $("homeSet").onclick=()=>{$("setBtn").click();backToCam=false;};
 $("homeClear").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawTiles();showHome();};
 document.addEventListener("visibilitychange",()=>{if(document.hidden&&stream){stopCam();showHome("Camera paused while you were away. Tap Start scanning to keep going. Your stack is saved.");}});
@@ -622,6 +622,29 @@ async function libDownload(setList){
   }catch(e){st.textContent="Download stopped: "+(e.message||e)+". Tap Download to continue where it left off.";}
   finally{libBusy=false;syncLibInfo();}
 }
+
+/* ---------- send to Claude (share sheet) ---------- */
+function csvCell(x){x=String(x??"");return /[",\n]/.test(x)?'"'+x.replace(/"/g,'""')+'"':x;}
+function dataUrlFile(u,name){try{const [h,b]=u.split(",");const bin=atob(b);const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);return new File([a],name,{type:(h.match(/data:([^;]+)/)||[])[1]||"image/jpeg"});}catch(e){return null;}}
+$("claudeBtn").onclick=async()=>{
+  const rows=stack.filter(r=>r.status==="ok"||r.status==="pick"||r.status==="fail");
+  if(!rows.length){toast("Your stack is empty.");return;}
+  const head=["Name","Set code","Set name","Collector number","Foil","Quantity","Condition","Rarity","Status","Notes","Read name","Read corner"];
+  const lines=[head.join(",")].concat(rows.map(r=>[r.name||"",r.set||"",r.setName||"",r.num||"",r.foil?"foil":"normal",r.qty,r.cond||"NM",r.rarity||"",r.status==="ok"?"sure":r.status==="pick"?"check":"not read",r.notes||"",r.read&&r.read.title||"",r.read&&String(r.read.coll||"").replace(/\s+/g," ")||""].map(csvCell).join(",")));
+  const stamp=new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
+  const files=[new File([lines.join("\n")],`scanned-cards-${stamp}.csv`,{type:"text/csv"})];
+  // camera snaps of the cards it wasn't sure about, so Claude can check them (and tune the scanner)
+  rows.filter(r=>(r.status==="pick"||r.status==="fail")&&r.cap).slice(0,10).forEach((r,i)=>{const f=dataUrlFile(r.cap,`check-${i+1}-${(r.name||"unread").replace(/[^A-Za-z0-9]+/g,"-").slice(0,30)}.jpg`);if(f)files.push(f);});
+  const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status!=="ok").length;
+  const text=`Add these ${n} scanned cards to my binder.${unsure?` ${unsure} need checking (photos attached).`:""}`;
+  try{
+    if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,text});}
+    else if(navigator.share){await navigator.share({text:text+"\n\n"+lines.join("\n")});}
+    else{await navigator.clipboard.writeText(text+"\n\n"+lines.join("\n"));toast("Copied. Paste it into your Claude chat.",4000);}
+    rows.forEach(r=>r.sent=true);saveStack();drawStack();
+    toast("Sent. Claude will add them to your binder.",3500);
+  }catch(e){if(e&&e.name!=="AbortError")toast("Couldn't open sharing: "+(e.message||e));}
+};
 
 /* ---------- settings ---------- */
 $("libGo").onclick=()=>{const v=$("libSets").value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);ls.set("scan.libSets",v.join(","));libDownload([...new Set(v)]);};
