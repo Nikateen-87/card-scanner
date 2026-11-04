@@ -139,6 +139,13 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <section class="sheet hidden" id="settings" aria-labelledby="setTitle">
   <header><h2 id="setTitle">Settings</h2><button class="btn sm" id="setClose">Done</button></header>
   <div class="body">
+    <h3 style="margin:4px 0 6px">Card library</h3>
+    <p class="hint" id="libInfo">Checking…</p>
+    <label class="f" for="libSets">Sets to recognize (set codes, separated by commas)</label>
+    <textarea class="field" id="libSets" rows="3" autocapitalize="characters" spellcheck="false"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn primary" id="libGo">Download library</button><button class="btn" id="libStopBtn">Stop</button><button class="btn" id="libClearBtn">Delete library</button></div>
+    <p class="hint" id="libStatus" role="status">Downloads a small picture of each card from Scryfall once (about a minute per set on Wi-Fi). Keep the app open while it runs; you can stop and continue later.</p>
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
     <label class="f" for="binderUrl">Your Card Binder link</label>
     <input class="field" id="binderUrl" placeholder="https://claude.ai/artifact/…" autocomplete="off" autocapitalize="off" spellcheck="false">
     <p class="hint">Copy it from the address bar when your binder is open. It's saved only on this device.</p>
@@ -271,6 +278,9 @@ let chain=Promise.resolve();function serial(fn){const p=chain.then(fn,fn);chain=
 /* ---------- identify ---------- */
 async function identify(r,card,strips){
   const W=card.width,H=card.height;
+  const L=r.lib||[];
+  if(L.length){const b=L[0],alt=L.find(x=>x.c.id!==b.c.id);
+    if(b.d<=20&&(!alt||alt.d-b.d>=4)){strips.title.width=strips.coll.width=0;done(r,b.c,"ok");r.via="picture";return;}}
   const clean=t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
   const TW="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz,'- ";
   const tries=[];
@@ -283,6 +293,15 @@ async function identify(r,card,strips){
   const collText=cand.map(c=>c.o.text).join(" | ");const cl=cand[0].p;
   strips.title.width=strips.coll.width=0;
   r.read={title,coll:collText};
+  if(L.length){
+    const nn=x=>String(x||"").toUpperCase().replace(/^0+/,"");const nums0=cand.map(c=>c.p.num).filter(Boolean),sets0=cand.map(c=>c.p.set).filter(Boolean);
+    const close=L.filter(x=>x.d<=32);
+    const byNum=close.filter(x=>nums0.some(n=>nn(x.c.collector_number)===nn(n)));
+    if(byNum.length){byNum.sort((a,b)=>(sets0.length?Math.max(...sets0.map(t=>sim(t,b.c.set.toUpperCase())))-Math.max(...sets0.map(t=>sim(t,a.c.set.toUpperCase()))):0)||a.d-b.d);done(r,byNum[0].c,"ok");r.via="picture+number";return;}
+    const byName=title?close.filter(x=>sim(x.c.name.split(" // ")[0],title)>=0.6):[];
+    if(byName.length===1||(byName.length&&byName[0].d+4<=(byName[1]?byName[1].d:99))){done(r,byName[0].c,"ok");r.via="picture+name";return;}
+    if(L[0].d<=28){done(r,L[0].c,"pick",(byName.length?byName:L).map(x=>x.c));r.why="Close match. Check it's the right card and printing.";return;}
+  }
   const capVec=vecFrom(card,0,0,W,H);
   // 1. set + number straight from the corner
   const tried=new Set(),cornerHits=[];
@@ -374,7 +393,7 @@ function detect(){
   return{x,y,w,h,asp};
 }
 const small=document.createElement("canvas");small.width=40;small.height=56;const sctx=small.getContext("2d",{willReadFrequently:true});
-let hold=0,smooth=null,prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
+let nextTry=0,hold=0,smooth=null,prevWhole=null,prev=null,prevBox=null,still=0,armed=true,lastSig=null,busy=0,lost=0;
 function sigOf(r){sctx.drawImage(v,r.x,r.y,r.w,r.h,0,0,40,56);const d=sctx.getImageData(0,0,40,56).data;const g=new Float32Array(2240);for(let i=0;i<2240;i++)g[i]=d[i*4]*.3+d[i*4+1]*.59+d[i*4+2]*.11;return g;}
 const sig=()=>sigOf(rect());
 const coarseC=document.createElement("canvas");coarseC.width=8;coarseC.height=11;const coarseG=coarseC.getContext("2d",{willReadFrequently:true});
@@ -399,8 +418,12 @@ function tick(){
     if(lastSig&&!armed&&dif(g,lastSig)>22)armed=true;
     if(opts.meter)$("meter").textContent=`${inside?"card in frame":"no card in frame"+(d.why?": "+d.why:"")}\nchanged ${look.toFixed(1)} (need under 14)  steady ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
     if(!inside){if(!busy)msg("Put a card in the green frame");}
-    else if(opts.auto&&armed&&still>=need&&busy<40){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;capture(g,box);}
-    else if(armed&&!busy)msg("Hold still…");
+    else if(opts.auto&&armed&&still>=need&&busy<40&&Date.now()>nextTry){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;
+      if(lib.length){const lm=liveMatch(box);
+        if(lm&&lm.m[0].d<=30){capture(g,lm.box,lm.m);}
+        else{nextTry=Date.now()+350;if(!busy)msg(lm&&lm.m[0].d<=40?"Almost: straighten the card or move a little closer":"Not recognized: is this set in your Card library?");}}
+      else capture(g,box);}
+    else if(armed&&!busy&&still<need)msg("Hold still…");
     prev=g;
     prevWhole=whole;
   }
@@ -409,7 +432,7 @@ function tick(){
 }
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
 let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
-async function capture(g,box){
+async function capture(g,box,pre){
   if(!box){const F=rect(),d=detect();box=d.w&&d.x>=F.x-F.w*0.1&&d.x+d.w<=F.x+F.w*1.1&&d.y>=F.y-F.h*0.1&&d.y+d.h<=F.y+F.h*1.1?d:F;}
   armed=false;still=0;lastSig=g||idSig(rect());
   flash("snap");msg("Got it ✓ next card");
@@ -420,16 +443,20 @@ async function capture(g,box){
   const card=best.card,strips=best.strips;
   const thumb=card.toDataURL("image/jpeg",0.6);
   const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
+  // instant picture match against the library
+  if(lib.length){const m=pre||libMatch(fingerprint(card,630,880));r.lib=m.slice(0,6).map(x=>({c:x.e.c,d:x.d}));
+    if(m.length&&m[0].d>36){r.libMiss=true;}}
   stack.unshift(r);drawTiles();busy++;
   try{await serial(()=>Promise.race([identify(r,card,strips),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
   finally{busy--;card.width=0;card.height=0;}
+  if(r.status==="fail"&&r.libMiss){stack=stack.filter(x=>x!==r);drawTiles();msg("That didn't look like a card. Next card…");saveStack();return;}
   if(r.status==="ok"){
     const dup=stack.find(x=>x!==r&&x.status==="ok"&&x.id===r.id&&x.foil===r.foil);
     if(dup){dup.qty+=1;stack=stack.filter(x=>x!==r);msg(`${dup.name} ×${dup.qty}`);}
     else msg(`✓ ${r.name}`);
     flash("good");beep(true);
-  }else if(r.status==="pick"){flash("meh");beep(false);msg(`? ${r.name}: check it in the stack`);}
-  else{beep(false);msg("Couldn't read that one. Check the stack.");}
+  }else if(r.status==="pick"){flash("meh");msg(`? ${r.name}: check it in the stack`);}
+  else{msg("Couldn't read that one. Check the stack.");}
   if(r.status!=="fail"&&r.img)r.thumb=await thumbFor(r.img);
   saveStack();drawTiles();if(!$("stack").classList.contains("hidden"))drawStack();
 }
@@ -542,7 +569,64 @@ $("sendBtn").onclick=async()=>{
 };
 $("sentOpen").onclick=()=>{if(opts.binder){const w=window.open(opts.binder,"_blank");if(!w)location.href=opts.binder;}};
 $("sentDone").onclick=()=>{$("sent").classList.add("hidden");showHome();};
+/* ---------- card library: picture fingerprints of every card in your sets ---------- */
+const DEFAULT_SETS="M11,CLB,SNC,FRA,VOW,NEO,AFR,STX,ZNR,NCC,ZNC,JMP,TZNC,TFRA,TSTX,TWWK,ANEO,TVOW,TAFR,THB,M21,TCLB,TNEO,TZNR,AVOW,ZEN,ELD,M10,DD2,TM11,6ED,GPT,PSTX,TNCC,PSNC,MH2,ULG,GRN,5ED,FRC,STA,LRW,EVE,TSNC,TMT";
+let lib=[],libReady=false;
+function idb(){return new Promise((res,rej)=>{const q=indexedDB.open("cardlib",1);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains("cards"))d.createObjectStore("cards",{keyPath:"k"});if(!d.objectStoreNames.contains("meta"))d.createObjectStore("meta",{keyPath:"k"});};q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function libLoad(){try{const d=await idb();lib=await new Promise((res,rej)=>{const t=d.transaction("cards").objectStore("cards").getAll();t.onsuccess=()=>res(t.result||[]);t.onerror=()=>rej(t.error);});libReady=true;syncLibInfo();}catch(e){lib=[];libReady=true;syncLibInfo();}}
+async function libPut(rows){const d=await idb();await new Promise((res,rej)=>{const tx=d.transaction("cards","readwrite");const st=tx.objectStore("cards");rows.forEach(r=>st.put(r));tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}
+async function libClear(){const d=await idb();await new Promise(res=>{const tx=d.transaction("cards","readwrite");tx.objectStore("cards").clear();tx.oncomplete=res;});lib=[];syncLibInfo();}
+function syncLibInfo(){const el=$("libInfo");if(!el)return;const sets=new Set(lib.map(x=>x.c.set));el.textContent=lib.length?`${lib.length.toLocaleString()} card pictures from ${sets.size} sets are on this device.`:"No card library yet. Download one so the scanner can recognize cards by their picture.";}
+/* fingerprints */
+const COS=(()=>{const t=[];for(let u=0;u<8;u++){t[u]=new Float32Array(32);for(let x=0;x<32;x++)t[u][x]=Math.cos((2*x+1)*u*Math.PI/64);}return t;})();
+const fpC=document.createElement("canvas");fpC.width=32;fpC.height=32;const fpG=fpC.getContext("2d",{willReadFrequently:true});
+function phash(src,sx,sy,sw,sh){fpG.imageSmoothingQuality="high";fpG.drawImage(src,sx,sy,sw,sh,0,0,32,32);const a=fpG.getImageData(0,0,32,32).data;const g=new Float32Array(1024);
+  for(let i=0;i<1024;i++)g[i]=a[i*4]*.3+a[i*4+1]*.59+a[i*4+2]*.11;
+  const tmp=new Float32Array(8*32);for(let u=0;u<8;u++)for(let y=0;y<32;y++){let s=0;for(let x=0;x<32;x++)s+=g[y*32+x]*COS[u][x];tmp[u*32+y]=s;}
+  const co=new Float32Array(64);for(let u=0;u<8;u++)for(let w=0;w<8;w++){let s=0;for(let y=0;y<32;y++)s+=tmp[u*32+y]*COS[w][y];co[w*8+u]=s;}
+  const vals=Array.from(co).slice(1);const med=vals.slice().sort((p,q)=>p-q)[31];const h=new Uint32Array(2);for(let i=1;i<64;i++)if(co[i]>med)h[i>>5]|=1<<(i&31);return h;}
+function colors(src,sx,sy,sw,sh){fpG.drawImage(src,sx,sy,sw,sh,0,0,3,3);const a=fpG.getImageData(0,0,3,3).data;const v=[];let m=0;for(let i=0;i<9;i++){v.push(a[i*4],a[i*4+1],a[i*4+2]);m+=a[i*4]+a[i*4+1]+a[i*4+2];}m=m/27||1;return v.map(x=>Math.round(x/m*100));}
+function fingerprint(src,W,H){return fpBox(src,0,0,W,H);}
+function fpBox(src,x,y,W,H){return{art:phash(src,x+W*0.08,y+H*0.11,W*0.84,H*0.45),full:phash(src,x,y,W,H),col:colors(src,x+W*0.08,y+H*0.11,W*0.84,H*0.45)};}
+/* match a box from the live camera, trying small shifts/size changes so a crooked or off-center card still matches */
+function liveMatch(b){let best=null;const vars=[[0,0,1],[0,0,0.96],[0,0,1.04],[0,-0.02,1],[0,0.02,1],[-0.02,0,1],[0.02,0,1]];
+  for(const [dx,dy,sc] of vars){const w=b.w*sc,h=b.h*sc,x=b.x+(b.w-w)/2+b.w*dx,y=b.y+(b.h-h)/2+b.h*dy;const m=libMatch(fpBox(v,x,y,w,h));
+    if(m.length&&(!best||m[0].d<best.m[0].d))best={m,box:{x,y,w,h}};}
+  return best;}
+const pop=x=>{x=x-((x>>>1)&0x55555555);x=(x&0x33333333)+((x>>>2)&0x33333333);return(((x+(x>>>4))&0x0F0F0F0F)*0x01010101)>>>24;};
+const ham=(a,b)=>pop(a[0]^b[0])+pop(a[1]^b[1]);
+function fpDist(a,b){let cd=0;for(let i=0;i<27;i++)cd+=Math.abs(a.col[i]-b.col[i]);return ham(a.art,b.art)+0.6*ham(a.full,b.full)+cd/27/4;}
+function libMatch(fp){const out=[];for(const e of lib){const d=fpDist(fp,e);if(out.length<8||d<out[out.length-1].d){out.push({e,d});out.sort((p,q)=>p.d-q.d);if(out.length>8)out.pop();}}return out;}
+function slim(c,face){const f=c.card_faces&&c.card_faces[face];return{id:c.id,oracle_id:c.oracle_id||(c.card_faces&&c.card_faces[0]&&c.card_faces[0].oracle_id),name:c.name,layout:c.layout,type_line:c.type_line||(f&&f.type_line)||"",collector_number:c.collector_number,frame_effects:c.frame_effects||[],border_color:c.border_color,set:c.set,set_name:c.set_name,rarity:c.rarity,finishes:c.finishes,prices:c.prices,printed_size:c.printed_size,lang:c.lang,
+  image_uris:{normal:faceImgN(c,face,"normal"),small:faceImgN(c,face,"small")},card_faces:c.card_faces?c.card_faces.map(x=>({name:x.name})):undefined};}
+function faceImgN(c,face,v){return(c.image_uris&&c.image_uris[v])||(c.card_faces&&c.card_faces[face]&&c.card_faces[face].image_uris&&c.card_faces[face].image_uris[v])||"";}
+let libBusy=false,libStop=false;
+async function libDownload(setList){
+  if(libBusy)return;libBusy=true;libStop=false;const st=$("libStatus");const have=new Set(lib.map(x=>x.k));let added=0,failed=0,seen=0;
+  const t0=Date.now();
+  try{
+    for(const code of setList){if(libStop)break;
+      let url=`/cards/search?unique=prints&include_extras=true&include_variations=true&order=set&q=${encodeURIComponent("e:"+code.toLowerCase())}`;const cards=[];
+      while(url&&!libStop){st.textContent=`${code}: listing cards…`;const r=await sf(url);if(!r||!r.data)break;cards.push(...r.data);url=r.has_more&&r.next_page?r.next_page.replace("https://api.scryfall.com",""):null;}
+      const jobs=[];for(const c of cards){const faces=(!c.image_uris&&c.card_faces)?c.card_faces.map((_,i)=>i):[0];for(const fi of faces){const k=c.id+":"+fi;if(!have.has(k))jobs.push({c,fi,k});}}
+      seen+=cards.length;let done=0,batch=[];
+      const worker=async()=>{while(jobs.length&&!libStop){const j=jobs.shift();const u=faceImgN(j.c,j.fi,"small")||faceImgN(j.c,j.fi,"normal");if(!u){failed++;continue;}const im=await loadImg(u);
+          if(!im){failed++;continue;}const fp=fingerprint(im,im.naturalWidth,im.naturalHeight);batch.push({k:j.k,c:slim(j.c,j.fi),art:fp.art,full:fp.full,col:fp.col});done++;added++;
+          if(batch.length>=40){const b=batch;batch=[];await libPut(b);lib.push(...b);}
+          const per=(Date.now()-t0)/Math.max(1,added);st.textContent=`${code}: ${done} of ${done+jobs.length} new pictures · ${added.toLocaleString()} added so far · about ${Math.ceil(per*jobs.length/60000)} min left in this set`;}};
+      await Promise.all([worker(),worker(),worker(),worker()]);
+      if(batch.length){await libPut(batch);lib.push(...batch);}
+    }
+    st.textContent=libStop?`Stopped. ${added.toLocaleString()} pictures added; tap Download again to finish.`:`Done. ${added.toLocaleString()} new pictures added${failed?`, ${failed} couldn't load`:""}.`;
+  }catch(e){st.textContent="Download stopped: "+(e.message||e)+". Tap Download to continue where it left off.";}
+  finally{libBusy=false;syncLibInfo();}
+}
+
 /* ---------- settings ---------- */
+$("libGo").onclick=()=>{const v=$("libSets").value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);ls.set("scan.libSets",v.join(","));libDownload([...new Set(v)]);};
+$("libStopBtn").onclick=()=>{libStop=true;};
+$("libClearBtn").onclick=async()=>{if(confirm("Delete the card library from this device? You can download it again any time."))await libClear();};
+libLoad();
 let zoomCaps=null;
 function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;$("zoomBtn").classList.add("hidden");if(!tr||!tr.getCapabilities)return;
   let c={};try{c=tr.getCapabilities()||{};}catch(e){}
@@ -561,7 +645,7 @@ function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilB
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
 $("snapBtn").onclick=()=>{armed=true;capture(null);};
 $("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
-$("setBtn").onclick=()=>{backToCam=!!stream;stopCam();$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
+$("setBtn").onclick=()=>{$("libSets").value=ls.get("scan.libSets",DEFAULT_SETS);syncLibInfo();backToCam=!!stream;stopCam();$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(backToCam){backToCam=false;startCam();}else if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;opts.sens=+$("sensSel").value||70;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
 syncSize();syncFast();syncFoil();drawTiles();showHome();$("meter").classList.toggle("hidden",!opts.meter);
