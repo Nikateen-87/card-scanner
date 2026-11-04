@@ -285,37 +285,47 @@ async function identify(r,card,strips){
   r.read={title,coll:collText};
   const capVec=vecFrom(card,0,0,W,H);
   // 1. set + number straight from the corner
-  const tried=new Set();
+  const tried=new Set(),cornerHits=[];
+  const nums=[...new Set(cand.map(c=>c.p.num).filter(Boolean))],sets=[...new Set(cand.map(c=>c.p.set).filter(Boolean))];
   for(const cd of cand){const p=cd.p;if(!p.set||!p.num)continue;const key=p.set+"/"+p.num;if(tried.has(key))continue;tried.add(key);
     const c=await sf(`/cards/${encodeURIComponent(p.set.toLowerCase())}/${encodeURIComponent(p.num.toLowerCase())}`);
-    if(c&&(!title||sim(c.name.split(" // ")[0],title)>=0.5||sim(c.name,title)>=0.5)){done(r,c,"ok");return;}}
+    if(c&&(!title||sim(c.name.split(" // ")[0],title)>=0.5||sim(c.name,title)>=0.5)){done(r,c,"ok");return;}
+    if(c)cornerHits.push(c);}
   // 2. name, then the right printing
   let named=null;
   if(title&&norm(title).length>=3){const w=title.split(" ");const tries=[title];if(w.length>2)tries.push(w.slice(0,-1).join(" "));if(w.length>3)tries.push(w.slice(0,2).join(" "));
     for(const t of tries){named=await sf(`/cards/named?fuzzy=${encodeURIComponent(t)}`);if(named)break;}
     if(!named){const ac=await sf(`/cards/autocomplete?q=${encodeURIComponent(w.slice(0,2).join(" "))}`);const best=ac&&ac.data&&ac.data.map(n=>({n,s:sim(n,title)})).sort((a,b)=>b.s-a.s)[0];if(best&&best.s>=0.55)named=await sf(`/cards/named?exact=${encodeURIComponent(best.n)}`);}}
-  if(!named&&cl.set&&cl.num){const c=await sf(`/cards/${encodeURIComponent(cl.set.toLowerCase())}/${encodeURIComponent(cl.num.toLowerCase())}`);if(c){done(r,c,"pick",[c]);return;}}
   if(!named){
-    // last try: picture match isn't possible without a name; ask the user
-    r.status="fail";r.why="Couldn't read the name. Search for it below.";return;
+    if(cornerHits.length){done(r,cornerHits[0],"pick",cornerHits);r.why="Read the corner but not the name. Check it's right.";return;}
+    r.status="fail";r.why=`Couldn't read the name${title?` (read "${title}")`:""}. Tap Wrong card to search it.`;return;
   }
+  const hit=cornerHits.find(c=>c.oracle_id&&c.oracle_id===named.oracle_id);if(hit){done(r,hit,"ok");return;}
   const q=`!"${named.name}" include:extras unique:prints`;
   const list=await sf(`/cards/search?order=released&q=${encodeURIComponent(q)}`);
   const prints=(list&&list.data)||[named];
-  let byNum=cl.num?prints.filter(p=>String(p.collector_number).toUpperCase()===cl.num.toUpperCase()):[];
-  if(byNum.length>1&&cl.set)byNum=byNum.filter(p=>p.set.toUpperCase()===cl.set)||byNum;
-  if(byNum.length===1){done(r,byNum[0],"ok");return;}
-  const pool=byNum.length?byNum:prints;
+  const nn=x=>String(x||"").toUpperCase().replace(/^0+/,"");
+  const setScore=p=>sets.length?Math.max(...sets.map(st=>sim(st,p.set.toUpperCase()))):0;
+  // 1) same collector number (any of the corner reads); several -> closest set code
+  let pool=prints.filter(p=>nums.some(n=>nn(p.collector_number)===nn(n)));
+  if(pool.length>1&&sets.length)pool.sort((a,b)=>setScore(b)-setScore(a));
+  if(pool.length===1||(pool.length>1&&setScore(pool[0])>=0.66&&setScore(pool[0])>setScore(pool[1]))){done(r,pool[0],"ok",pool.length>1?pool.slice(0,6):undefined);if(pool.length>1)r.choices=undefined;return;}
+  // 2) set code close to what was read (e.g. one letter off)
+  if(!pool.length&&sets.length){const bySet=prints.map(p=>({p,s:setScore(p)})).sort((a,b)=>b.s-a.s);
+    if(bySet[0]&&bySet[0].s>=0.66&&(!bySet[1]||bySet[0].s>bySet[1].s)){done(r,bySet[0].p,"pick",bySet.slice(0,6).map(x=>x.p));r.why=`Read set "${sets[0]}" but not the number. Check it's right.`;return;}}
+  if(!pool.length)pool=prints;
   if(pool.length===1){done(r,pool[0],"ok");return;}
+  // 3) picture match: only trusted when clearly ahead (reprints with the same art look alike)
   const scored=await bestByImage(capVec,pool);
   if(scored.length){
     const gap=scored.length>1?scored[0].s-scored[1].s:1;
-    done(r,scored[0].c,gap>0.08&&scored[0].s>0.55?"ok":"pick",scored.slice(0,6).map(x=>x.c));return;
+    done(r,scored[0].c,gap>0.12&&scored[0].s>0.6?"ok":"pick",scored.slice(0,8).map(x=>x.c));
+    if(r.status==="pick")r.why=`Found ${named.name}, but couldn't read which set. Tap the right one.`;return;
   }
-  done(r,pool[0],"pick",pool.slice(0,6));
+  done(r,pool[0],"pick",pool.slice(0,8));r.why=`Found ${named.name}, but couldn't read which set. Tap the right one.`;
 }
 function done(r,c,status,choices){
-  Object.assign(r,toEntry(c,r.foil));r.status=status;r.why=status==="pick"?"Not sure which printing. Tap the right one.":"";
+  Object.assign(r,toEntry(c,r.foil));r.status=status;r.why=status==="pick"?"Not sure which printing. Tap the right one.":"";r.readNote=r.read?`Read: "${r.read.title||"?"}" · corner "${(r.read.coll||"").replace(/\s+/g," ").slice(0,40)}"`:"";
   r.choices=choices?choices.map(x=>toEntry(x,r.foil)):undefined;
 }
 
@@ -470,6 +480,7 @@ function drawStack(){
     <div><div class="nm">${r.status==="work"?"Reading…":r.status==="fail"?"Not read yet":esc(r.name)}${r.foil?" ✦":""}</div>
       <div class="meta">${r.set?`${esc(r.set)} #${esc(r.num)} · ${esc(r.setName||"")}`:""}${r.price!=null?` · $${r.price.toFixed(2)}`:""}${r.sent?' · <span class="okc">sent ✓</span>':""}</div>
       ${r.why?`<div class="${r.status==="fail"?"bad":"warn"}" style="font-size:13px;margin-bottom:6px">${esc(r.why)}</div>`:""}
+      ${(r.status==="pick"||r.status==="fail")&&r.read?`<div class="hint" style="font-size:12px;margin-bottom:6px">Read: "${esc(r.read.title||"?")}" · corner "${esc(String(r.read.coll||"").replace(/\s+/g," ").slice(0,50))}"</div>`:""}
       <div class="acts">
         <span class="qty"><button class="btn sm" data-a="minus">−</button><b>×${r.qty}</b><button class="btn sm" data-a="plus">+</button></span>
         ${r.status!=="fail"&&r.status!=="work"?`<button class="btn sm" data-a="foil" ${(!r.canFoil&&!r.foil)||(r.foil&&!r.canNon)?"disabled":""}>${r.foil?"Foil ✦":"Not foil"}</button>`:""}
