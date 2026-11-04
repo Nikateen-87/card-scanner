@@ -214,17 +214,34 @@ function cropCanvas(src,x,y,w,h,scale,bin){
   else{const mean=sum/n;if(mean<128)for(let i=0;i<a.length;i+=4){a[i]=a[i+1]=a[i+2]=255-a[i];}}
   g.putImageData(d,0,0);return c;
 }
+/* grab a strip straight from the camera at full resolution, scaled so text is a good size for reading */
+function strip(src,x,y,w,h,targetH){const sc=Math.max(1,Math.min(5,targetH/h));const c=document.createElement("canvas");c.width=Math.max(1,Math.round(w*sc));c.height=Math.max(1,Math.round(h*sc));
+  const g=c.getContext("2d",{willReadFrequently:true});g.imageSmoothingEnabled=true;g.imageSmoothingQuality="high";g.drawImage(src,x,y,w,h,0,0,c.width,c.height);return c;}
+/* mode "gray": stretched grayscale; "bin": Otsu black/white. Text always ends up dark on light. */
+function prep(src,mode){
+  const c=document.createElement("canvas");c.width=src.width;c.height=src.height;const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(src,0,0);
+  const d=g.getImageData(0,0,c.width,c.height),a=d.data,n=a.length/4;const hist=new Uint32Array(256);
+  for(let i=0;i<a.length;i+=4){const v=(a[i]*.3+a[i+1]*.59+a[i+2]*.11)|0;a[i]=v;hist[v]++;}
+  let lo=0,hi=255,acc=0;for(let k=0;k<256;k++){acc+=hist[k];if(acc>n*0.02){lo=k;break;}}acc=0;for(let k=255;k>=0;k--){acc+=hist[k];if(acc>n*0.02){hi=k;break;}}
+  const span=Math.max(1,hi-lo);const h2=new Uint32Array(256);
+  for(let i=0;i<a.length;i+=4){let v=Math.round((a[i]-lo)*255/span);v=v<0?0:v>255?255:v;a[i]=v;h2[v]++;}
+  let t=128;if(mode==="bin"){let sum=0;for(let k=0;k<256;k++)sum+=k*h2[k];let sB=0,wB=0,best=-1;for(let k=0;k<256;k++){wB+=h2[k];if(!wB)continue;const wF=n-wB;if(!wF)break;sB+=k*h2[k];const mB=sB/wB,mF=(sum-sB)/wF,b=wB*wF*(mB-mF)*(mB-mF);if(b>best){best=b;t=k;}}}
+  let dark=0;for(let i=0;i<a.length;i+=4)if(a[i]<t)dark++;const invert=dark>n*0.5;
+  for(let i=0;i<a.length;i+=4){let v=a[i];if(mode==="bin")v=v<t?0:255;if(invert)v=255-v;a[i]=a[i+1]=a[i+2]=v;a[i+3]=255;}
+  g.putImageData(d,0,0);return c;}
+function sharpness(c){const w=Math.min(160,c.width),h=Math.max(1,Math.round(c.height*w/c.width));const t=document.createElement("canvas");t.width=w;t.height=h;const g=t.getContext("2d",{willReadFrequently:true});g.drawImage(c,0,0,w,h);
+  const a=g.getImageData(0,0,w,h).data;let s=0;for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=(y*w+x)*4;const l=4*a[i]-a[i-4]-a[i+4]-a[i-w*4]-a[i+w*4];s+=l*l;}t.width=0;return s/(w*h);}
 async function ocr(canvas,psm,white){
-  if(!ocrReady)return"";
+  if(!ocrReady)return{text:"",conf:0};
   await worker.setParameters({tessedit_pageseg_mode:String(psm),tessedit_char_whitelist:white||""});
-  try{const r=await worker.recognize(canvas);return(r&&r.data&&r.data.text||"").trim();}finally{canvas.width=0;canvas.height=0;}
+  try{const r=await worker.recognize(canvas);return{text:(r&&r.data&&r.data.text||"").trim(),conf:(r&&r.data&&r.data.confidence)||0};}finally{canvas.width=0;canvas.height=0;}
 }
 function parseCollector(t){
   t=t.toUpperCase().replace(/[|]/g,"I");
   let num="",set="";
   const m1=t.match(/\b0*(\d{1,4}[A-Z]?)\s*\/\s*\d{1,4}\b/);if(m1)num=m1[1];
-  if(!num){const m2=t.match(/\b0*(\d{1,4})\b/);if(m2)num=m2[1];}
-  const words=t.match(/\b[A-Z][A-Z0-9]{2,4}\b/g)||[];
+  if(!num){const m2=t.match(/(?:^|[^0-9])0*(\d{1,4})(?![0-9])/);if(m2)num=m2[1];}
+  const words=(t.match(/[A-Z0-9]{3,5}/g)||[]).filter(w=>/[A-Z]/.test(w)&&!/^\d+[A-Z]$/.test(w));
   const skip=new Set(["EN","TM","THE","AND","LLC","WIZARDS","COAST","ILLUS","ILL"]);
   for(const w of words){if(!skip.has(w)&&!/^\d+$/.test(w)&&w.length>=3&&w.length<=5){set=w;break;}}
   return{num,set};
@@ -252,26 +269,31 @@ async function bestByImage(capVec,cards){
 
 let chain=Promise.resolve();function serial(fn){const p=chain.then(fn,fn);chain=p.catch(()=>{});return p;}
 /* ---------- identify ---------- */
-async function identify(r,card){
+async function identify(r,card,strips){
   const W=card.width,H=card.height;
-  const clean=t=>t.replace(/[^A-Za-z0-9,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
-  let title=clean(await ocr(cropCanvas(card,W*0.035,H*0.03,W*0.8,H*0.08,2.2,false),7));
-  if(norm(title).length<4)title=clean(await ocr(cropCanvas(card,W*0.03,H*0.015,W*0.84,H*0.11,2,true),6))||title;
+  const clean=t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
+  const TW="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz,'- ";
+  const tries=[];
+  for(const mode of ["gray","bin"]){const o=await ocr(prep(strips.title,mode),7,TW);const t=clean(o.text);tries.push({t,conf:o.conf+(norm(t).length>=4?10:0)});}
+  tries.sort((a,b)=>b.conf-a.conf);let title=tries[0].t;
   const W2="0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ•*.- ";
-  let collText=await ocr(cropCanvas(card,W*0.02,H*0.885,W*0.6,H*0.105,3,true),6,W2);
-  if(!parseCollector(collText).num)collText+=" "+await ocr(cropCanvas(card,W*0.02,H*0.86,W*0.65,H*0.13,2.5,false),6,W2);
-  const cl=parseCollector(collText);
+  const cand=[];
+  for(const mode of ["bin","gray"]){const o=await ocr(prep(strips.coll,mode),6,W2);const p=parseCollector(o.text);cand.push({o,p,score:(p.num?40:0)+(p.set?40:0)+o.conf/5});}
+  cand.sort((a,b)=>b.score-a.score);
+  const collText=cand.map(c=>c.o.text).join(" | ");const cl=cand[0].p;
+  strips.title.width=strips.coll.width=0;
   r.read={title,coll:collText};
   const capVec=vecFrom(card,0,0,W,H);
   // 1. set + number straight from the corner
-  if(cl.set&&cl.num){
-    const c=await sf(`/cards/${encodeURIComponent(cl.set.toLowerCase())}/${encodeURIComponent(cl.num.toLowerCase())}`);
-    if(c&&(!title||sim(c.name.split(" // ")[0],title)>=0.5||sim(c.name,title)>=0.5)){done(r,c,"ok");return;}
-  }
+  const tried=new Set();
+  for(const cd of cand){const p=cd.p;if(!p.set||!p.num)continue;const key=p.set+"/"+p.num;if(tried.has(key))continue;tried.add(key);
+    const c=await sf(`/cards/${encodeURIComponent(p.set.toLowerCase())}/${encodeURIComponent(p.num.toLowerCase())}`);
+    if(c&&(!title||sim(c.name.split(" // ")[0],title)>=0.5||sim(c.name,title)>=0.5)){done(r,c,"ok");return;}}
   // 2. name, then the right printing
   let named=null;
   if(title&&norm(title).length>=3){const w=title.split(" ");const tries=[title];if(w.length>2)tries.push(w.slice(0,-1).join(" "));if(w.length>3)tries.push(w.slice(0,2).join(" "));
-    for(const t of tries){named=await sf(`/cards/named?fuzzy=${encodeURIComponent(t)}`);if(named)break;}}
+    for(const t of tries){named=await sf(`/cards/named?fuzzy=${encodeURIComponent(t)}`);if(named)break;}
+    if(!named){const ac=await sf(`/cards/autocomplete?q=${encodeURIComponent(w.slice(0,2).join(" "))}`);const best=ac&&ac.data&&ac.data.map(n=>({n,s:sim(n,title)})).sort((a,b)=>b.s-a.s)[0];if(best&&best.s>=0.55)named=await sf(`/cards/named?exact=${encodeURIComponent(best.n)}`);}}
   if(!named&&cl.set&&cl.num){const c=await sf(`/cards/${encodeURIComponent(cl.set.toLowerCase())}/${encodeURIComponent(cl.num.toLowerCase())}`);if(c){done(r,c,"pick",[c]);return;}}
   if(!named){
     // last try: picture match isn't possible without a name; ask the user
@@ -380,13 +402,16 @@ let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.
 async function capture(g,box){
   if(!box){const F=rect(),d=detect();box=d.w&&d.x>=F.x-F.w*0.1&&d.x+d.w<=F.x+F.w*1.1&&d.y>=F.y-F.h*0.1&&d.y+d.h<=F.y+F.h*1.1?d:F;}
   armed=false;still=0;lastSig=g||idSig(rect());
-  const card=document.createElement("canvas");card.width=630;card.height=880;
-  card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
   flash("snap");msg("Got it ✓ next card");
+  const grab=()=>{const card=document.createElement("canvas");card.width=630;card.height=880;card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
+    const strips={title:strip(v,box.x+box.w*0.05,box.y+box.h*0.035,box.w*0.74,box.h*0.06,64),coll:strip(v,box.x+box.w*0.025,box.y+box.h*0.885,box.w*0.5,box.h*0.095,96)};
+    return{card,strips,sh:sharpness(strips.coll)+sharpness(strips.title)};};
+  let best=grab();for(let k=0;k<2;k++){await new Promise(res=>setTimeout(res,90));if(!stream)break;const f=grab();if(f.sh>best.sh){best.card.width=0;best.strips.title.width=best.strips.coll.width=0;best=f;}else{f.card.width=0;f.strips.title.width=f.strips.coll.width=0;}}
+  const card=best.card,strips=best.strips;
   const thumb=card.toDataURL("image/jpeg",0.6);
   const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
   stack.unshift(r);drawTiles();busy++;
-  try{await serial(()=>Promise.race([identify(r,card),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
+  try{await serial(()=>Promise.race([identify(r,card,strips),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
   finally{busy--;card.width=0;card.height=0;}
   if(r.status==="ok"){
     const dup=stack.find(x=>x!==r&&x.status==="ok"&&x.id===r.id&&x.foil===r.foil);
