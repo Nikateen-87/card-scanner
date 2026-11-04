@@ -1,0 +1,34 @@
+name: Build card library
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: card-library
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install picture tools
+        run: npm install --no-save sharp@0.33.5
+      - name: Install neural network (optional)
+        continue-on-error: true
+        run: npm install --no-save sharp@0.33.5 @tensorflow/tfjs-node@4.22.0 @tensorflow-models/mobilenet@2.1.1
+      - name: Build library
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node build-library.mjs
+      - name: Save library
+        run: |
+          git config user.name "card-library-bot"
+          git config user.email "card-library-bot@users.noreply.github.com"
+          git add lib
+          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Update card library" && git push; fi
