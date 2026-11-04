@@ -97,6 +97,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
+  <p class="hint" style="font-size:12px">Version 21 · Nov 3 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -627,6 +628,7 @@ $("libGo").onclick=()=>{const v=$("libSets").value.toUpperCase().split(/[^A-Z0-9
 $("libStopBtn").onclick=()=>{libStop=true;};
 $("libClearBtn").onclick=async()=>{if(confirm("Delete the card library from this device? You can download it again any time."))await libClear();};
 libLoad();
+$("updBtn").onclick=async()=>{$("updBtn").textContent="Updating…";try{if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs)await r.unregister();}if(window.caches){for(const k of await caches.keys())await caches.delete(k);}}catch(e){}location.replace(location.pathname+"?v="+Date.now());};
 let zoomCaps=null;
 function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;$("zoomBtn").classList.add("hidden");if(!tr||!tr.getCapabilities)return;
   let c={};try{c=tr.getCapabilities()||{};}catch(e){}
