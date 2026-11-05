@@ -97,7 +97,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 35 · Nov 5 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 36 · Nov 5 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -106,6 +106,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Put a card in the green frame</span>
     <button class="btn sm" id="sizeBtn">Frame M</button>
     <button class="btn sm hidden" id="zoomBtn">1×</button>
+    <button class="btn sm hidden" id="torchBtn" aria-pressed="false">💡 Light</button>
     <button class="btn sm" id="lockBtn" aria-pressed="false">Set: Any</button>
     <button class="btn sm" id="fastBtn" aria-pressed="true">⚡ Fast</button>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
@@ -537,7 +538,7 @@ function drawStack(){
         ${r.status!=="work"?`<button class="btn sm" data-a="other">Other printing</button><button class="btn sm" data-a="search">Wrong card</button>`:""}
         <button class="btn sm" data-a="rm">Remove</button></div>
       ${r.choices&&r.status==="pick"?`<div class="choices">${r.choices.map((c,i)=>`<button class="choice" data-a="choose" data-i="${i}"><img src="${esc(c.small||c.img)}" alt=""><span>${esc(c.set)} #${esc(c.num)}<br>${esc(c.setName)}</span></button>`).join("")}</div>`:""}
-      ${r.searching?`<div style="margin-top:8px;display:flex;gap:6px"><input class="field" data-a="q" placeholder="Card name" value="${esc(r.q||r.name||"")}"><button class="btn sm" data-a="find">Find</button></div>`:""}
+      ${r.searching?`<div style="margin-top:8px;display:flex;gap:6px"><input class="field" data-a="q" placeholder="Name, number, or set + number (TMT 98)" autocapitalize="off" autocomplete="off" value="${esc(r.q||(r.set&&r.num?r.set+" "+r.num:r.name)||"")}"><button class="btn sm" data-a="find">Find</button></div>`:""}
     </div></div>`).join("");
   $("sendBtn").disabled=!stack.some(r=>r.status==="ok"||r.status==="pick");$("clearSentBtn").classList.toggle("hidden",!stack.some(r=>r.sent));
   $("stackTitle").textContent=`Stack · ${total()} card${total()===1?"":"s"}`;
@@ -559,6 +560,7 @@ $("stackBody").addEventListener("click",async e=>{
     else r.searching=true;
   }
   else if(a==="find"){const q=b.parentElement.querySelector("input").value.trim();if(!q)return;r.q=q;b.disabled=true;b.textContent="…";
+    const hit=await findByNumber(r,q);if(hit){if(hit.length){r.choices=hit.slice(0,30);r.status="pick";r.why="Tap the right card.";r.searching=false;}else toast("No card with that number in that set.",3500);saveStack();drawStack();return;}
     const c=await sf(`/cards/named?fuzzy=${encodeURIComponent(q)}`);
     if(!c){toast("No card by that name.");drawStack();return;}
     const list=await sf(`/cards/search?order=released&q=${encodeURIComponent(`!"${c.name}" include:extras unique:prints`)}`);
@@ -566,6 +568,24 @@ $("stackBody").addEventListener("click",async e=>{
   }
   saveStack();drawStack();drawTiles();
 });
+/* "Wrong card" search by collector number: "98", "TMT 98", "Ninja 5". Uses the built-in library, so it works offline. null = not a number search */
+async function findByNumber(r,q){
+  const t=q.trim().split(/\s+/);const last=String(t[t.length-1]||"").replace(/^#/,"");if(!/^\d+[a-z★]?$/i.test(last))return null;
+  const num=last.replace(/^0+(?=\d)/,"").toLowerCase();const rest=t.slice(0,-1).join(" ").replace(/[•·]/g,"").trim();
+  const haveBuilt=typeof built!=="undefined"&&built&&built.rows;
+  let set="",name="";if(rest){if(haveBuilt&&built.sets[rest.toLowerCase()])set=rest.toLowerCase();else if(!haveBuilt&&/^[a-z0-9]{3,5}$/i.test(rest))set=rest.toLowerCase();else name=rest;}
+  const recent=stack.filter(x=>x.set).slice(0,20).map(x=>String(x.set).toLowerCase());
+  const codes=set?[set]:[...new Set([String(r.set||"").toLowerCase(),String(opts.lockSet||"").toLowerCase(),...recent].filter(Boolean))];
+  const out=[];
+  if(haveBuilt){
+    if(!built.idx){built.idx=new Map();built.rows.forEach((row,i)=>{const k=row[4]+":"+String(row[5]).toLowerCase();if(!built.idx.has(k))built.idx.set(k,[]);built.idx.get(k).push(i);});}
+    const seen=new Set();const add=i=>{if(seen.has(i))return;seen.add(i);out.push(toEntry(builtCard(i),r.foil));};
+    if(name){built.rows.forEach((row,i)=>{if(String(row[5]).toLowerCase()!==num)return;const nm=String(row[3]).split(" // ")[0];if(norm(nm).includes(norm(name))||sim(nm,name)>=0.6)add(i);});}
+    else for(const c of codes)for(const code of [c,"t"+c,c.replace(/^t/,"")])(built.idx.get(code+":"+num)||[]).forEach(add);
+  }
+  if(!out.length&&(set||codes.length)&&!name){for(const c of (set?[set]:codes.slice(0,3))){const x=await sf(`/cards/${encodeURIComponent(c)}/${encodeURIComponent(num)}`);if(x&&x.id)out.push(toEntry(x,r.foil));}}
+  if(!out.length&&!set&&!name&&!codes.length){toast("Add the set too, like TMT 98.",3500);return [];}
+  return out;}
 $("clearSentBtn").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawStack();drawTiles();};
 $("clearBtn").onclick=()=>{if(!stack.length)return;if(confirm("Clear every card from this stack? Send them to your binder first if you haven't.")){stack=[];saveStack();drawStack();drawTiles();}};
 
@@ -828,7 +848,9 @@ function setupTrack(){const tr=stream&&stream.getVideoTracks()[0];zoomCaps=null;
   const adv={};if(Array.isArray(c.focusMode)&&c.focusMode.includes("continuous"))adv.focusMode="continuous";
   if(Array.isArray(c.exposureMode)&&c.exposureMode.includes("continuous"))adv.exposureMode="continuous";
   if(c.zoom&&c.zoom.max>1){zoomCaps=c.zoom;$("zoomBtn").classList.remove("hidden");adv.zoom=Math.min(Math.max(opts.zoom||1,c.zoom.min||1),c.zoom.max);}
+  $("torchBtn").classList.toggle("hidden",!c.torch);if(c.torch&&opts.torch)adv.torch=true;$("torchBtn").setAttribute("aria-pressed",!!(c.torch&&opts.torch));
   if(Object.keys(adv).length)tr.applyConstraints({advanced:[adv]}).catch(()=>{});syncZoom();}
+$("torchBtn").onclick=()=>{const tr=stream&&stream.getVideoTracks()[0];if(!tr)return;opts.torch=!opts.torch;saveOpts();$("torchBtn").setAttribute("aria-pressed",!!opts.torch);tr.applyConstraints({advanced:[{torch:!!opts.torch}]}).catch(()=>toast("This camera can't turn its light on from here."));};
 function syncZoom(){$("zoomBtn").textContent=(opts.zoom||1)+"×";}
 $("zoomBtn").onclick=()=>{if(!zoomCaps)return;const steps=[1,1.5,2,3].filter(z=>z<=zoomCaps.max+0.01);const i=steps.indexOf(opts.zoom);opts.zoom=steps[(i+1)%steps.length]||1;saveOpts();syncZoom();
   const tr=stream&&stream.getVideoTracks()[0];if(tr)tr.applyConstraints({advanced:[{zoom:opts.zoom}]}).catch(()=>toast("Zoom isn't available on this camera."));toast(opts.zoom>1?"Zoomed in: hold the iPad higher, where it focuses sharper.":"Zoom off.");};
