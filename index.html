@@ -42,7 +42,7 @@ button{font:inherit;color:inherit}
 #guide.good{animation:good .8s ease-out}#guide.good i{animation:goodc .8s ease-out}
 #guide.meh{animation:meh .8s ease-out}
 @keyframes snap{0%{background:rgba(255,255,255,.35)}100%{background:transparent}}
-@keyframes good{0%{background:rgba(46,204,113,.45);box-shadow:0 0 0 9999px rgba(0,0,0,.5),0 0 50px 12px #2ecc71}100%{background:transparent}}
+@keyframes good{0%{background:rgba(46,204,113,.45);box-shadow:0 0 40px 10px #2ecc71}100%{background:transparent}}
 @keyframes goodc{0%,70%{border-color:#2ecc71}}
 @keyframes meh{0%{background:rgba(241,196,15,.35)}100%{background:transparent}}
 .top{position:absolute;left:0;right:0;top:0;display:flex;gap:8px;align-items:center;padding:calc(env(safe-area-inset-top) + 8px) 12px 18px;background:linear-gradient(rgba(0,0,0,.75),transparent)}
@@ -93,11 +93,11 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <h1>Card Scanner</h1>
   <p id="homeNote">Hold each card in the frame. It snaps on its own, reads the card, checks it against Scryfall and flashes green. When the stack is done, send it to your Card Binder.</p>
   <button class="btn primary" id="go" style="min-width:240px;min-height:58px;font-size:19px">📷 Start scanning</button>
-  <div class="homerow"><button class="btn" id="homeStack">Stack</button><button class="btn" id="homeSend">Send to Claude</button><button class="btn" id="homeSet" aria-label="Settings">⚙︎</button></div>
+  <div class="homerow"><button class="btn" id="homeStack">Stack</button><button class="btn" id="homeSend">Send to binder</button><button class="btn" id="homeSet" aria-label="Settings">⚙︎</button></div>
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 32 · Nov 5 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 33 · Nov 5 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -120,7 +120,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
 <section class="sheet hidden" id="stack" aria-labelledby="stackTitle">
   <header><h2 id="stackTitle">Stack</h2><button class="btn sm" id="stackClose">Back</button></header>
   <div class="body" id="stackBody"></div>
-  <footer><button class="btn" id="clearBtn">Clear</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn" id="sendBtn">Paste to binder</button><button class="btn primary" id="claudeBtn">Send to Claude</button></footer>
+  <footer><button class="btn" id="clearBtn">Clear</button><button class="btn hidden" id="clearSentBtn">Clear sent</button><button class="btn" id="claudeBtn">Send to Claude</button><button class="btn primary" id="sendBtn">Send to binder</button></footer>
 </section>
 
 <section class="sheet hidden" id="sent" aria-labelledby="sentHead">
@@ -165,6 +165,9 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
     <p class="hint">Copy it from the address bar when your binder is open. It's saved only on this device.</p>
     <label class="f" for="condSel">Condition for new scans</label>
     <select class="field" id="condSel"><option>NM</option><option>LP</option><option>MP</option><option>HP</option><option>DMG</option></select>
+    <label class="f" for="mailTo">Send to binder: your email</label>
+    <input class="field" id="mailTo" type="email" placeholder="you@gmail.com" autocomplete="email" autocapitalize="off" spellcheck="false">
+    <p class="hint">Send to binder opens Mail with your cards. Tap Send and they show up in your binder on their own. Saved only on this device.</p>
     <label class="f"><input type="checkbox" id="autoSnap" checked> Snap automatically when the card is still</label>
     <label class="f"><input type="checkbox" id="beep" checked> Beep on a good read</label>
     <label class="f"><input type="checkbox" id="meterChk"> Show scan meter (for troubleshooting)</label>
@@ -190,7 +193,10 @@ function toast(t,ms){const el=$("toast");el.textContent=t;el.classList.remove("h
 let opts=Object.assign({sens:70,zoom:1,size:"M",meter:false,fast:true,foil:false,cond:"NM",auto:true,beep:true,binder:""},ls.get("scan.opts",{}));
 let stack=ls.get("scan.stack",[]);stack.forEach(r=>{if(r.status==="work"){r.status="fail";r.why="This scan was interrupted. Tap Wrong card to search it, or remove it and scan again.";}});let seq=stack.reduce((m,r)=>Math.max(m,r.k||0),0);
 const saveOpts=()=>ls.set("scan.opts",opts);
-const saveStack=()=>{if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,choices:r.choices?r.choices.slice(0,6):undefined}))))ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,thumb:undefined,choices:undefined})));};
+const slimLib=r=>r.lib?r.lib.slice(0,3).map(x=>({c:{name:x.c.name,set:x.c.set,collector_number:x.c.collector_number},d:x.d})):undefined;
+const saveStackNow=()=>{clearTimeout(saveT);if(!ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,lib:slimLib(r),choices:r.choices?r.choices.slice(0,6):undefined}))))ls.set("scan.stack",stack.map(r=>({...r,cap:undefined,thumb:undefined,lib:undefined,choices:undefined})));};
+let saveT=0;const saveStack=()=>{clearTimeout(saveT);saveT=setTimeout(saveStackNow,700);};
+addEventListener("pagehide",()=>saveStackNow());document.addEventListener("visibilitychange",()=>{if(document.hidden)saveStackNow();});
 
 /* ---------- Scryfall ---------- */
 let lastCall=0;
@@ -414,7 +420,7 @@ let nearMatch=null;
 let nearSince=0;
 function showNear(lm){if(lm&&lm.m[0].d<=46){const c=lm.m[0].e.c;if(!nearSince)nearSince=Date.now();else if(Date.now()-nearSince>1200&&typeof built!=="undefined"&&built){nearSince=0;nearMatch=null;armed=true;autoTry=true;capture(null,lm.box,lm.m);msg("Reading the corner…");return;}nearMatch={lm,at:Date.now()};msg(`Almost: ${c.name} ${String(c.set).toUpperCase()} #${c.collector_number}? Tap here to accept`);}else{nearMatch=null;nearSince=0;msg("Not recognized: is this set in your Card library?");}}
 $("msg").addEventListener("click",()=>{if(nearMatch&&Date.now()-nearMatch.at<4000&&stream){const n=nearMatch;nearMatch=null;armed=true;capture(null,n.lm.box,n.lm.m);}});
-let staleSince=0,floor=3,frozenSig=null;
+let snapAt=0,emptyN=0,staleSince=0,floor=3,frozenSig=null;
 function tick(){
   if(!stream)return;
   if(!ocrReady&&$("msg").textContent!=="Card reader still loading…")msg("Card reader still loading…");
@@ -425,11 +431,11 @@ function tick(){
     const whole=sigOf(vis());if(frozenSig&&dif(whole,frozenSig)<0.02){if(Date.now()-staleSince>15000){stopCam();showHome("The camera froze. Tap Start scanning to keep going. Your stack is saved.");return;}}else staleSince=Date.now();frozenSig=whole;
     const need=opts.lockSet?(opts.fast?5:7):(opts.fast?3:6);const F=rect();const d=detect();
     const ov=(a,b)=>Math.max(0,Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y));
-    const seenNow=!!d.w&&ov(d,F)>F.w*F.h*0.45&&d.w<F.w*1.35;hold=seenNow?8:Math.max(0,hold-1);const inside=hold>0;
-    const g=idSig(F);const look=prev?dif(g,prev):99;const steady=look<14;still=steady&&inside?still+1:0;
+    const tex=d.w?detail(sigOf(d)):0;const seenNow=!!d.w&&ov(d,F)>F.w*F.h*0.45&&d.w<F.w*1.35&&tex>=3;hold=seenNow?8:Math.max(0,hold-1);const inside=hold>0;
+    const g=idSig(F);const look=prev?dif(g,prev):99;const steady=look<14;still=steady&&seenNow?still+1:0;
     showBox(F,inside);
-    if(lastSig&&!armed&&dif(g,lastSig)>22)armed=true;
-    if(opts.meter)$("meter").textContent=`${inside?"card in frame":"no card in frame"+(d.why?": "+d.why:"")}\nchanged ${look.toFixed(1)} (need under 14)  steady ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
+    if(!armed){emptyN=seenNow?0:emptyN+1;if(Date.now()-snapAt>600&&(emptyN>=3||(seenNow&&lastSig&&dif(g,lastSig)>22)))armed=true;}
+    if(opts.meter)$("meter").textContent=`${inside?"card in frame":"no card in frame"+(d.why?": "+d.why:"")}\nchanged ${look.toFixed(1)} (need under 14)  detail ${tex.toFixed(1)} (need 3+)  steady ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
     if(!inside){if(!busy)msg("Put a card in the green frame");}
     else if(opts.auto&&armed&&still>=need&&busy<40&&Date.now()>nextTry){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;
       if(libCount()&&!opts.lockSet){const lm=liveMatch(box);
@@ -447,7 +453,7 @@ function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");v
 let manualSnap=false,autoTry=false;let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
 async function capture(g,box,pre){
   if(!box){const F=rect(),d=detect();box=d.w&&d.x>=F.x-F.w*0.1&&d.x+d.w<=F.x+F.w*1.1&&d.y>=F.y-F.h*0.1&&d.y+d.h<=F.y+F.h*1.1?d:F;}
-  armed=false;still=0;lastSig=g||idSig(rect());
+  armed=false;still=0;snapAt=Date.now();emptyN=0;lastSig=g||idSig(rect());
   flash("snap");msg("Got it ✓ next card");
   const grab=()=>{const card=document.createElement("canvas");card.width=630;card.height=880;card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
     const cw=strip(v,box.x-box.w*0.01,box.y+box.h*0.85,box.w*0.53,box.h*0.21,498);const strips={title:strip(v,box.x+box.w*0.05,box.y+box.h*0.035,box.w*0.74,box.h*0.06,64),titleWide:strip(v,box.x+box.w*0.03,box.y-box.h*0.015,box.w*0.79,box.h*0.15,240),coll:strip(cw,0,0,cw.width,cw.height,cw.height),corner:cw};
@@ -462,7 +468,7 @@ async function capture(g,box,pre){
     if(m.length&&m[0].d>44){r.libMiss=true;}}
   stack.unshift(r);drawTiles();busy++;
   try{await serial(()=>Promise.race([identify(r,card,strips),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
-  finally{busy--;card.width=0;card.height=0;}
+  finally{busy--;card.width=0;card.height=0;[strips.title,strips.coll,strips.titleWide,strips.corner,...(strips.corners||[])].forEach(c=>{if(c)c.width=0;});}
   if(r.status==="fail"&&(r.libMiss||r.autoTry)&&!r.manual){stack=stack.filter(x=>x!==r);drawTiles();msg("That didn't look like a card. Next card…");saveStack();return;}
   if(r.status==="ok"){
     const dup=stack.find(x=>x!==r&&x.status==="ok"&&x.id===r.id&&x.foil===r.foil);
@@ -497,7 +503,7 @@ function showHome(note,ok){
 $("go").onclick=startCam;
 $("homeBtn").onclick=()=>{stopCam();showHome();};
 $("homeStack").onclick=()=>{backToCam=false;drawStack();$("stack").classList.remove("hidden");};
-$("homeSend").onclick=()=>$("claudeBtn").click();
+$("homeSend").onclick=()=>$("sendBtn").click();
 $("homeSet").onclick=()=>{$("setBtn").click();backToCam=false;};
 $("homeClear").onclick=()=>{stack=stack.filter(r=>!r.sent);saveStack();drawTiles();showHome();};
 document.addEventListener("visibilitychange",()=>{if(document.hidden&&stream){stopCam();showHome("Camera paused while you were away. Tap Start scanning to keep going. Your stack is saved.");}});
@@ -566,7 +572,23 @@ async function copyText(text){
   try{await navigator.clipboard.writeText(text);return true;}catch(e){}
   try{const ta=$("sentText");ta.value=text;ta.removeAttribute("readonly");ta.focus();ta.select();ta.setSelectionRange(0,text.length);const ok=document.execCommand("copy");ta.setAttribute("readonly","");return ok;}catch(e){return false;}
 }
-$("sendBtn").onclick=async()=>{
+$("mailTo").value=opts.mailTo||"";$("mailTo").onchange=e=>{opts.mailTo=e.target.value.trim();saveOpts();};
+$("sendBtn").onclick=()=>{
+  const rows=stack.filter(r=>r.status==="ok"||r.status==="pick");
+  if(!rows.length){toast(stack.length?"Nothing ready to send: fix the red cards first (Wrong card) or remove them.":"Your stack is empty.",4500);return;}
+  let to=String(opts.mailTo||"").trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)){to=String(prompt("Which email does your binder read? (your Gmail address)",to)||"").trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)){toast("Add your email in Settings to send to the binder.",4000);return;}opts.mailTo=to;saveOpts();$("mailTo").value=to;}
+  const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status==="pick").length;
+  const pay={v:2,at:new Date().toISOString(),c:rows.map(r=>{const o={n:r.name,s:r.set,sn:r.setName,c:r.num,q:r.qty,r:r.rarity,o:r.cond||"NM"};if(r.foil)o.f=1;if(r.price!=null)o.p=r.price;if(r.notes)o.nt=r.notes;if(r.lang&&r.lang!=="English")o.l=r.lang;return o;})};
+  const b64=btoa(unescape(encodeURIComponent(JSON.stringify(pay))));
+  const stamp=new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
+  const body=`${n} card${n===1?"":"s"} for my Card Binder${unsure?` (${unsure} to double-check)`:""}. Just tap Send.\n\nCBSCAN2:${b64}\n`;
+  rows.forEach(r=>r.sent=true);saveStackNow();drawTiles();if(!$("stack").classList.contains("hidden"))drawStack();
+  toast("Mail is opening. Tap Send, then open your binder: the cards come in on their own.",6500);
+  setTimeout(()=>{location.href=`mailto:${to}?subject=${encodeURIComponent("binder-scan "+stamp)}&body=${encodeURIComponent(body)}`;},150);
+};
+const copyFlow=async()=>{
   const rows=stack.filter(r=>r.status==="ok"||r.status==="pick");
   if(!rows.length){toast(stack.length?"Nothing ready to send: fix the red cards first (Wrong card) or remove them.":"Your stack is empty.",4500);return;}
   const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status==="pick").length;
