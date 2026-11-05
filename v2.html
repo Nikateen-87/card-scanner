@@ -98,7 +98,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
   <p class="hint" id="netState"></p>
-  <p class="hint" style="font-size:12px">Version 2.4 · Nov 4 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 2.5 · Nov 4 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -444,7 +444,7 @@ function tick(){
   loopT=setTimeout(tick,opts.fast?70:110);
 }
 function flash(cls){const g=$("guide");g.classList.remove("snap","good","meh");void g.offsetWidth;g.classList.add(cls);}
-let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
+let manualSnap=false;let actx=null;function beep(ok){if(!opts.beep)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),ga=actx.createGain();o.frequency.value=ok?1320:520;ga.gain.value=.08;o.connect(ga);ga.connect(actx.destination);o.start();o.stop(actx.currentTime+(ok?.09:.18));}catch(e){}}
 async function capture(g,box,pre){
   if(!box){const F=rect(),d=detect();box=d.w&&d.x>=F.x-F.w*0.1&&d.x+d.w<=F.x+F.w*1.1&&d.y>=F.y-F.h*0.1&&d.y+d.h<=F.y+F.h*1.1?d:F;}
   armed=false;still=0;lastSig=g||idSig(rect());
@@ -458,7 +458,7 @@ async function capture(g,box,pre){
   let best=grab();for(let k=0;k<2;k++){await new Promise(res=>setTimeout(res,90));if(!stream)break;const f=grab();if(f.sh>best.sh){best.card.width=0;best.strips.title.width=best.strips.coll.width=0;best=f;}else{f.card.width=0;f.strips.title.width=f.strips.coll.width=0;}}
   const card=best.card,strips=best.strips;
   const thumb=card.toDataURL("image/jpeg",0.6);
-  const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb};
+  const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb,manual:manualSnap};manualSnap=false;
   // instant picture match against the library
   if(libCount()){const m=pre||libMatch(fingerprint(card,630,880));r.lib=m.slice(0,6).map(x=>({c:x.e.c,d:x.d}));
     if(m.length&&m[0].d>36){r.libMiss=true;}}
@@ -687,17 +687,19 @@ function dataUrlFile(u,name){try{const [h,b]=u.split(",");const bin=atob(b);cons
 $("claudeBtn").onclick=async()=>{
   const rows=stack.filter(r=>r.status==="ok"||r.status==="pick"||r.status==="fail");
   if(!rows.length){toast("Your stack is empty.");return;}
-  const head=["Name","Set code","Set name","Collector number","Foil","Quantity","Condition","Rarity","Status","Notes","Read name","Read corner"];
-  const lines=[head.join(",")].concat(rows.map(r=>[r.name||"",r.set||"",r.setName||"",r.num||"",r.foil?"foil":"normal",r.qty,r.cond||"NM",r.rarity||"",r.status==="ok"?"sure":r.status==="pick"?"check":"not read",r.notes||"",r.read&&r.read.title||"",r.read&&String(r.read.coll||"").replace(/\s+/g," ")||""].map(csvCell).join(",")));
+  const head=["Name","Set code","Set name","Collector number","Foil","Quantity","Condition","Rarity","Status","Notes","Read name","Read corner","Best picture match","Score","2nd match","Score 2","3rd match","Score 3","How"];
+  const lines=[head.join(",")].concat(rows.map(r=>[r.name||"",r.set||"",r.setName||"",r.num||"",r.foil?"foil":"normal",r.qty,r.cond||"NM",r.rarity||"",r.status==="ok"?"sure":r.status==="pick"?"check":"not read",r.notes||"",r.read&&r.read.title||"",r.read&&String(r.read.coll||"").replace(/\s+/g," ")||"",...[0,1,2].flatMap(i=>{const m=r.lib&&r.lib[i];return m?[`${m.c.name} ${String(m.c.set).toUpperCase()} #${m.c.collector_number}`,m.d.toFixed(1)]:["",""];}),r.via||(r.manual?"snap button":"")].map(csvCell).join(",")));
   const stamp=new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
-  const files=[new File([lines.join("\n")],`scanned-cards-${stamp}.csv`,{type:"text/csv"})];
+  const files=[new File([lines.join("\n")],`scanned-cards-${stamp}.csv`,{type:"text/plain"})];
   // camera snaps of the cards it wasn't sure about, so Claude can check them (and tune the scanner)
   rows.filter(r=>(r.status==="pick"||r.status==="fail")&&r.cap).slice(0,10).forEach((r,i)=>{const f=dataUrlFile(r.cap,`check-${i+1}-${(r.name||"unread").replace(/[^A-Za-z0-9]+/g,"-").slice(0,30)}.jpg`);if(f)files.push(f);});
   const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status!=="ok").length;
   const text=`Add these ${n} scanned cards to my binder.${unsure?` ${unsure} need checking (photos attached).`:""}`;
   try{
     const full=text+"\n\n"+lines.join("\n");
+    const pics=files.slice(1);
     if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,text:full});}
+    else if(pics.length&&navigator.canShare&&navigator.canShare({files:pics})){await navigator.share({files:pics,text:full});}
     else if(navigator.share){await navigator.share({text:text+"\n\n"+lines.join("\n")});}
     else{await navigator.clipboard.writeText(text+"\n\n"+lines.join("\n"));toast("Copied. Paste it into your Claude chat.",4000);}
     rows.forEach(r=>r.sent=true);saveStack();drawStack();
@@ -791,8 +793,8 @@ function syncFast(){$("fastBtn").setAttribute("aria-pressed",opts.fast);$("fastB
 $("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.fast?"Fast: snaps the moment a new card lands. Good for dropping cards on a pile.":"Steady: waits for the card to be held still. Fewer blurry snaps.");};
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
 $("foilBtn").onclick=()=>{opts.foil=!opts.foil;saveOpts();syncFoil();};
-$("snapBtn").onclick=()=>{armed=true;capture(null);};
-$("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;capture(null);}};
+$("snapBtn").onclick=()=>{armed=true;manualSnap=true;capture(null);};
+$("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;manualSnap=true;capture(null);}};
 $("setBtn").onclick=()=>{$("libSets").value=ls.get("scan2.libSets",DEFAULT_SETS);$("autoNew").checked=opts.autoNew!==false;syncLibInfo();backToCam=!!stream;stopCam();$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(backToCam){backToCam=false;startCam();}else if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;opts.autoNew=$("autoNew").checked;opts.sens=+$("sensSel").value||70;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
