@@ -97,7 +97,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 29 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 30 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -106,6 +106,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <div class="top"><button class="btn sm" id="homeBtn" aria-label="Home">⌂</button><span id="msg">Put a card in the green frame</span>
     <button class="btn sm" id="sizeBtn">Frame M</button>
     <button class="btn sm hidden" id="zoomBtn">1×</button>
+    <button class="btn sm" id="lockBtn" aria-pressed="false">Set: Any</button>
     <button class="btn sm" id="fastBtn" aria-pressed="true">⚡ Fast</button>
     <button class="btn sm" id="foilBtn" aria-pressed="false">Not foil</button>
     <button class="btn sm" id="setBtn" aria-label="Settings">⚙︎</button></div>
@@ -135,6 +136,17 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
     <textarea class="field" id="sentText" readonly rows="3" style="font-size:12px"></textarea>
   </div>
   <footer><button class="btn" id="sentCopy">Copy again</button><button class="btn" id="sentOpen">Open my binder</button><button class="btn primary" id="sentDone">Done</button></footer>
+</section>
+
+<section class="sheet hidden" id="lockSheet" aria-labelledby="lockTitle">
+  <header><h2 id="lockTitle">Which set are you scanning?</h2><button class="btn sm" id="lockClose">Close</button></header>
+  <div class="body">
+    <p class="hint">Sorting a pile from one set? Pick it here. Then the scanner only needs the number in the card's corner to know exactly which card it is.</p>
+    <div id="lockChips" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0"></div>
+    <label class="f" for="lockInput">Set code</label>
+    <input class="field" id="lockInput" placeholder="e.g. TMT" autocapitalize="characters" autocomplete="off" spellcheck="false">
+    <div style="margin-top:12px"><button class="btn primary" id="lockOk">Use this set</button></div>
+  </div>
 </section>
 
 <section class="sheet hidden" id="settings" aria-labelledby="setTitle">
@@ -281,7 +293,7 @@ let chain=Promise.resolve();function serial(fn){const p=chain.then(fn,fn);chain=
 async function identify(r,card,strips){
   const W=card.width,H=card.height;
   const L=r.lib||[];
-  if(L.length){const b=L[0],alt=L.find(x=>x.c.id!==b.c.id);
+  if(L.length&&!opts.lockSet){const b=L[0],alt=L.find(x=>x.c.id!==b.c.id);
     const alt2=L.find(x=>x.c.oracle_id!==b.c.oracle_id);
     if((b.d<=20&&(!alt||alt.d-b.d>=4))||(b.d<=34&&(!alt2||alt2.d-b.d>=8)&&(!alt||alt.c.oracle_id!==b.c.oracle_id||alt.d-b.d>=3))){strips.title.width=strips.coll.width=0;if(strips.corner)strips.corner.width=0;done(r,b.c,"ok");r.via="picture";return;}}
   const clean=t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
@@ -430,7 +442,7 @@ function tick(){
     if(opts.meter)$("meter").textContent=`${inside?"card in frame":"no card in frame"+(d.why?": "+d.why:"")}\nchanged ${look.toFixed(1)} (need under 14)  steady ${still}/${need}\nready ${armed?"yes":"no: swap card"}  reader ${ocrReady?"on":"loading"}\nvideo ${v.videoWidth}×${v.videoHeight}  queue ${busy}`;
     if(!inside){if(!busy)msg("Put a card in the green frame");}
     else if(opts.auto&&armed&&still>=need&&busy<40&&Date.now()>nextTry){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;
-      if(libCount()){const lm=liveMatch(box);
+      if(libCount()&&!opts.lockSet){const lm=liveMatch(box);
         if(goodMatch(lm&&lm.m)){capture(g,lm.box,lm.m);}
         else{nextTry=Date.now()+350;if(!busy)showNear(lm);}}
       else capture(g,box);}
@@ -709,8 +721,8 @@ async function builtLoad(){
   }catch(e){}
 }
 const libCount=()=>lib.length+(built?built.n:0);
-function builtFpMatch(fp,out){if(!built)return;const A=built.art,F=built.full,C=built.col,n=built.n;const top=[];
-  for(let i=0;i<n;i++){const d0=pop(fp.art[0]^A[2*i])+pop(fp.art[1]^A[2*i+1])+0.6*(pop(fp.full[0]^F[2*i])+pop(fp.full[1]^F[2*i+1]));
+function builtFpMatch(fp,out){if(!built)return;const A=built.art,F=built.full,C=built.col,n=built.n;const top=[];const LS=opts.lockSet?opts.lockSet.toLowerCase():"";
+  for(let i=0;i<n;i++){if(LS&&built.rows[i][4]!==LS)continue;const d0=pop(fp.art[0]^A[2*i])+pop(fp.art[1]^A[2*i+1])+0.6*(pop(fp.full[0]^F[2*i])+pop(fp.full[1]^F[2*i+1]));
     if(top.length>=8&&d0>=top[top.length-1].d)continue;let cd=0;const o=27*i;for(let k=0;k<27;k++)cd+=Math.abs(fp.col[k]-C[o+k]);const d=d0+cd/27/4;
     if(top.length<8||d<top[top.length-1].d){top.push({i,d});top.sort((p,q)=>p.d-q.d);if(top.length>8)top.pop();}}
   for(const t of top)out.push({e:{c:builtCard(t.i),k:built.rows[t.i][0]},d:t.d});}
@@ -744,12 +756,13 @@ async function cornerMatch(r,card,strips,title,cand){
   if(!built.idx){built.idx=new Map();built.rows.forEach((row,i)=>{const k=row[4]+":"+String(row[5]).toLowerCase();if(!built.idx.has(k))built.idx.set(k,[]);built.idx.get(k).push(i);});built.setKeys=Object.keys(built.sets);}
   const fp=fingerprint(card,630,880);const found=new Map();
   for(const n of nums){const nl=n.toLowerCase();
-    const codes=sets.length?built.setKeys.filter(code=>sets.some(st=>code===st||(st.length>=3&&code.length>=3&&sim(code,st)>=0.66))):[];
+    const recent=[...new Set(stack.filter(x=>x.status==="ok"&&x.set).slice(0,20).map(x=>String(x.set).toLowerCase()))];
+    const codes=opts.lockSet?[opts.lockSet.toLowerCase()]:[...new Set([...(sets.length?built.setKeys.filter(code=>sets.some(st=>code===st||(st.length>=3&&code.length>=3&&sim(code,st)>=0.66))):[]),...recent])];
     for(const code of codes){const ix=built.idx.get(code+":"+nl);if(ix)ix.forEach(i=>{const exact=sets.includes(code);const pd=builtDist(fp,i);const ts=title?sim(String(built.rows[i][3]).split(" // ")[0],title):0;
-      const score=pd-(exact?6:0)-ts*15;const prevS=found.get(i);if(prevS===undefined||score<prevS.score)found.set(i,{i,pd,ts,exact,score});});}}
+      const score=pd-(exact?6:0)-ts*15-(recent.includes(code)?5:0);const prevS=found.get(i);if(prevS===undefined||score<prevS.score)found.set(i,{i,pd,ts,exact,score});});}}
   const list=[...found.values()].sort((a,b)=>a.score-b.score);if(!list.length)return false;
   const b=list[0];
-  if(b.pd<=55||b.ts>=0.6){done(r,builtCard(b.i),list.length>1&&list[1].score-b.score<3?"pick":"ok",list.length>1?list.slice(0,6).map(x=>builtCard(x.i)):undefined);if(r.status==="ok")r.choices=undefined;r.via="corner";return true;}
+  if(b.pd<=55||b.ts>=0.6||opts.lockSet){done(r,builtCard(b.i),list.length>1&&list[1].score-b.score<3?"pick":"ok",list.length>1?list.slice(0,6).map(x=>builtCard(x.i)):undefined);if(r.status==="ok")r.choices=undefined;r.via="corner";return true;}
   return false;
 }
 
@@ -771,6 +784,15 @@ $("zoomBtn").onclick=()=>{if(!zoomCaps)return;const steps=[1,1.5,2,3].filter(z=>
   const tr=stream&&stream.getVideoTracks()[0];if(tr)tr.applyConstraints({advanced:[{zoom:opts.zoom}]}).catch(()=>toast("Zoom isn't available on this camera."));toast(opts.zoom>1?"Zoomed in: hold the iPad higher, where it focuses sharper.":"Zoom off.");};
 function syncSize(){$("sizeBtn").textContent="Frame "+opts.size;}
 $("sizeBtn").onclick=()=>{opts.size={S:"M",M:"L",L:"S"}[opts.size]||"M";saveOpts();syncSize();placeGuide();toast({S:"Small frame: hold the iPad higher.",M:"Medium frame.",L:"Large frame: hold the iPad lower."}[opts.size]);};
+function syncLock(){const b=$("lockBtn");if(!b)return;b.textContent="Set: "+(opts.lockSet?opts.lockSet:"Any");b.setAttribute("aria-pressed",!!opts.lockSet);}
+$("lockBtn").onclick=()=>{const recent=[...new Set(stack.filter(x=>x.set).map(x=>String(x.set).toUpperCase()))].slice(0,8);
+  $("lockChips").innerHTML=["",...recent].map(c=>`<button class="btn sm" data-set="${esc(c)}">${c?esc(c):"Any set"}</button>`).join("");$("lockInput").value=opts.lockSet||"";$("lockSheet").classList.remove("hidden");};
+$("lockChips").onclick=e=>{const b=e.target.closest("[data-set]");if(b)setLock(b.dataset.set);};
+$("lockOk").onclick=()=>setLock($("lockInput").value);
+$("lockClose").onclick=()=>$("lockSheet").classList.add("hidden");
+function setLock(v){v=String(v||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
+  if(v&&typeof built!=="undefined"&&built&&!built.sets[v.toLowerCase()]){toast(`There's no set "${v}" in the card library.`);return;}
+  opts.lockSet=v;saveOpts();syncLock();$("lockSheet").classList.add("hidden");toast(v?`Scanning ${v} only: the corner number picks the card.`:"Scanning any set.");}
 function syncFast(){$("fastBtn").setAttribute("aria-pressed",opts.fast);$("fastBtn").textContent=opts.fast?"⚡ Fast":"Steady";}
 $("fastBtn").onclick=()=>{opts.fast=!opts.fast;saveOpts();syncFast();toast(opts.fast?"Fast: snaps the moment a new card lands. Good for dropping cards on a pile.":"Steady: waits for the card to be held still. Fewer blurry snaps.");};
 function syncFoil(){$("foilBtn").setAttribute("aria-pressed",opts.foil);$("foilBtn").textContent=opts.foil?"✦ Foil":"Not foil";}
@@ -780,7 +802,7 @@ $("v").onclick=$("guide").onclick=()=>{if(stream){armed=true;manualSnap=true;cap
 $("setBtn").onclick=()=>{$("libSets").value=ls.get("scan.libSets",DEFAULT_SETS);$("autoNew").checked=opts.autoNew!==false;syncLibInfo();backToCam=!!stream;stopCam();$("binderUrl").value=opts.binder||"";$("condSel").value=opts.cond;$("autoSnap").checked=opts.auto;$("beep").checked=opts.beep;$("meterChk").checked=opts.meter;$("sensSel").value=String(opts.sens);$("settings").classList.remove("hidden");};
 $("setClose").onclick=()=>{setTimeout(()=>{if(backToCam){backToCam=false;startCam();}else if(!stream)showHome();},0);const u=$("binderUrl").value.trim();opts.binder=/^https:\/\/claude\.ai\//.test(u)?u:"";if(u&&!opts.binder)toast("That doesn't look like a claude.ai link, so it wasn't saved.");
   opts.cond=$("condSel").value;opts.auto=$("autoSnap").checked;opts.beep=$("beep").checked;opts.meter=$("meterChk").checked;opts.autoNew=$("autoNew").checked;opts.sens=+$("sensSel").value||70;$("meter").classList.toggle("hidden",!opts.meter);saveOpts();$("settings").classList.add("hidden");};
-syncSize();syncFast();syncFoil();drawTiles();showHome();$("meter").classList.toggle("hidden",!opts.meter);
+syncSize();syncLock();syncFast();syncFoil();drawTiles();showHome();$("meter").classList.toggle("hidden",!opts.meter);
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 })();
 </script>
