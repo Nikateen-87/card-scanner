@@ -98,7 +98,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
   <p class="hint" id="netState"></p>
-  <p class="hint" style="font-size:12px">Version 3.2 · Nov 5 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 3.3 · Nov 5 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -294,7 +294,10 @@ async function identify(r,card,strips){
   const L=r.lib||[];
   if(L.length&&!opts.lockSet){const b=L[0],alt=L.find(x=>x.c.id!==b.c.id);
     const alt2=L.find(x=>x.c.oracle_id!==b.c.oracle_id);
-    if((b.d<=20&&(!alt||alt.d-b.d>=4))||(b.d<=34&&(!alt2||alt2.d-b.d>=8)&&(!alt||alt.c.oracle_id!==b.c.oracle_id||alt.d-b.d>=3))){strips.title.width=strips.coll.width=0;(strips.corners||[strips.corner]).forEach(c=>{if(c)c.width=0;});done(r,b.c,"ok");r.via="picture";return;}}
+    // another printing of the same card that looks alike (extended art, reprinted lands): the picture gives the name, the corner number must pick the printing
+    const twin=L.some(x=>x.c.id!==b.c.id&&x.c.oracle_id===b.c.oracle_id&&x.d-b.d<7);
+    if(b.d<=34&&(!alt2||alt2.d-b.d>=8))strips.picName=String(b.c.name).split(" // ")[0];
+    if(!twin&&((b.d<=20&&(!alt||alt.d-b.d>=4))||(b.d<=34&&(!alt2||alt2.d-b.d>=8)))){strips.title.width=strips.coll.width=0;(strips.corners||[strips.corner]).forEach(c=>{if(c)c.width=0;});done(r,b.c,"ok");r.via="picture";return;}}
   const clean=t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
   const TW="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz,'- ";
   const tries=[];
@@ -842,7 +845,7 @@ async function cornerMatch(r,card,strips,title,cand){
       if(!built.bySet.has(row[4]))built.bySet.set(row[4],[]);built.bySet.get(row[4]).push(i);});built.setKeys=Object.keys(built.sets);}
   const lock=opts.lockSet?opts.lockSet.toLowerCase():"";
   // every title line we read is a witness for the name
-  const titles=[...new Set([title,...(strips.titles||[])].filter(t=>t&&norm(t).replace(/ /g,"").length>=4))];
+  const titles=[...new Set([title,...(strips.titles||[]),strips.picName].filter(t=>t&&norm(t).replace(/ /g,"").length>=4))];
   const nameSim=nm=>{nm=String(nm).split(" // ")[0];let s=0;for(const t of titles)s=Math.max(s,sim(nm,t));return s;};
   // read the corner on each frame; count how many frames printed-format numbers agree
   const frames=(strips.corners||[strips.corner]).filter(f=>f&&f.width);const strong=new Map(),weak=new Map(),texts=[],setReads=[];
@@ -862,6 +865,9 @@ async function cornerMatch(r,card,strips,title,cand){
     const score=-(sv*12+wv*2)+pd*0.3-ts*25-sh*4-(recent.includes(code)?3:0);
     const p=found.get(i);if(!p||score<p.score)found.set(i,{i,sv,wv,pd,ts,sh,score,via});};
   for(const n of nums)for(const code of codes){const ix=built.idx.get(code+":"+n.toLowerCase());if(ix)ix.forEach(i=>consider(i,"corner"));}
+  // the picture knows the card: every printing of it, in any set, is a candidate; the corner number picks one
+  if(strips.picName){if(!built.byName){built.byName=new Map();built.rows.forEach((row,i)=>{const k=norm(String(row[3]).split(" // ")[0]);if(!built.byName.has(k))built.byName.set(k,[]);built.byName.get(k).push(i);});}
+    const ix=built.byName.get(norm(strips.picName))||[];if(ix.length<=400)ix.forEach(i=>{const row=built.rows[i];if(lock&&row[4]!==lock)return;consider(i,(strong.get(String(row[5]).toLowerCase())||0)>0?"corner":"picture");});}
   if(titles.length)for(const code of (lock?[lock]:codes.slice(0,6))){const ix=built.bySet.get(code)||[];
     for(const i of ix){if(nameSim(built.rows[i][3])>=0.72)consider(i,"name");}}
   const list=[...found.values()].sort((a,b)=>a.score-b.score);if(!list.length)return false;
