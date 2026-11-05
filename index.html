@@ -46,7 +46,7 @@ button{font:inherit;color:inherit}
 @keyframes goodc{0%,70%{border-color:#2ecc71}}
 @keyframes meh{0%{background:rgba(241,196,15,.35)}100%{background:transparent}}
 .top{position:absolute;left:0;right:0;top:0;display:flex;gap:8px;align-items:center;padding:calc(env(safe-area-inset-top) + 8px) 12px 18px;background:linear-gradient(rgba(0,0,0,.75),transparent)}
-#msg{flex:1;font-weight:700;font-size:17px;text-shadow:0 1px 3px #000}
+#msg{flex:1;font-weight:700;font-size:17px;text-shadow:0 1px 3px #000;cursor:pointer}
 .bot{position:absolute;left:0;right:0;bottom:0;padding:10px 12px calc(env(safe-area-inset-bottom) + 12px);background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;flex-direction:column;gap:10px}
 #tiles{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;min-height:10px}
 .tile{flex:none;width:64px;border-radius:9px;overflow:hidden;background:var(--panel);border:3px solid #777;font-size:11px;line-height:1.25;position:relative}
@@ -97,7 +97,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 26 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 27 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -282,7 +282,8 @@ async function identify(r,card,strips){
   const W=card.width,H=card.height;
   const L=r.lib||[];
   if(L.length){const b=L[0],alt=L.find(x=>x.c.id!==b.c.id);
-    if(b.d<=20&&(!alt||alt.d-b.d>=4)){strips.title.width=strips.coll.width=0;done(r,b.c,"ok");r.via="picture";return;}}
+    const alt2=L.find(x=>x.c.oracle_id!==b.c.oracle_id);
+    if((b.d<=20&&(!alt||alt.d-b.d>=4))||(b.d<=34&&(!alt2||alt2.d-b.d>=8)&&(!alt||alt.c.oracle_id!==b.c.oracle_id||alt.d-b.d>=3))){strips.title.width=strips.coll.width=0;done(r,b.c,"ok");r.via="picture";return;}}
   const clean=t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").replace(/^[^A-Za-z]+/,"").trim();
   const TW="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz,'- ";
   const tries=[];
@@ -302,7 +303,7 @@ async function identify(r,card,strips){
     if(byNum.length){byNum.sort((a,b)=>(sets0.length?Math.max(...sets0.map(t=>sim(t,b.c.set.toUpperCase())))-Math.max(...sets0.map(t=>sim(t,a.c.set.toUpperCase()))):0)||a.d-b.d);done(r,byNum[0].c,"ok");r.via="picture+number";return;}
     const byName=title?close.filter(x=>sim(x.c.name.split(" // ")[0],title)>=0.6):[];
     if(byName.length===1||(byName.length&&byName[0].d+4<=(byName[1]?byName[1].d:99))){done(r,byName[0].c,"ok");r.via="picture+name";return;}
-    if(L[0].d<=28){done(r,L[0].c,"pick",(byName.length?byName:L).map(x=>x.c));r.why="Close match. Check it's the right card and printing.";return;}
+    if(L[0].d<=40){done(r,L[0].c,"pick",(byName.length?byName:L).map(x=>x.c));r.why="Close match. Check it's the right card and printing.";return;}
   }
   const capVec=vecFrom(card,0,0,W,H);
   // 1. set + number straight from the corner
@@ -403,6 +404,11 @@ function idSig(r){coarseG.imageSmoothingQuality="high";coarseG.drawImage(v,r.x+r
 const dif=(a,b)=>{let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length;};
 const detail=a=>{let s=0;for(let y=0;y<56;y++)for(let x=1;x<40;x++)s+=Math.abs(a[y*40+x]-a[y*40+x-1]);return s/(56*39);};
 function msg(t){$("msg").textContent=t;}
+/* a match is trusted when it's close, or a bit further but clearly ahead of the next different card */
+function goodMatch(m){if(!m||!m.length)return false;const b=m[0],alt=m.find(x=>x.e.c.oracle_id!==b.e.c.oracle_id);return b.d<=30||(b.d<=38&&(!alt||alt.d-b.d>=7));}
+let nearMatch=null;
+function showNear(lm){if(lm&&lm.m[0].d<=46){const c=lm.m[0].e.c;nearMatch={lm,at:Date.now()};msg(`Almost: ${c.name} ${String(c.set).toUpperCase()} #${c.collector_number}? Tap here to accept`);}else{nearMatch=null;msg("Not recognized: is this set in your Card library?");}}
+$("msg").addEventListener("click",()=>{if(nearMatch&&Date.now()-nearMatch.at<4000&&stream){const n=nearMatch;nearMatch=null;armed=true;capture(null,n.lm.box,n.lm.m);}});
 let staleSince=0,floor=3,frozenSig=null;
 function tick(){
   if(!stream)return;
@@ -422,8 +428,8 @@ function tick(){
     if(!inside){if(!busy)msg("Put a card in the green frame");}
     else if(opts.auto&&armed&&still>=need&&busy<40&&Date.now()>nextTry){const box=d.w&&ov(d,F)>d.w*d.h*0.85?d:F;
       if(libCount()){const lm=liveMatch(box);
-        if(lm&&lm.m[0].d<=30){capture(g,lm.box,lm.m);}
-        else{nextTry=Date.now()+350;if(!busy)msg(lm&&lm.m[0].d<=40?"Almost: straighten the card or move a little closer":"Not recognized: is this set in your Card library?");}}
+        if(goodMatch(lm&&lm.m)){capture(g,lm.box,lm.m);}
+        else{nextTry=Date.now()+350;if(!busy)showNear(lm);}}
       else capture(g,box);}
     else if(armed&&!busy&&still<need)msg("Hold still…");
     prev=g;
@@ -447,7 +453,7 @@ async function capture(g,box,pre){
   const r={k:++seq,at:Date.now(),status:"work",qty:1,foil:opts.foil,cond:opts.cond,cap:thumb,manual:manualSnap};manualSnap=false;
   // instant picture match against the library
   if(libCount()){const m=pre||libMatch(fingerprint(card,630,880));r.lib=m.slice(0,6).map(x=>({c:x.e.c,d:x.d}));
-    if(m.length&&m[0].d>36){r.libMiss=true;}}
+    if(m.length&&m[0].d>44){r.libMiss=true;}}
   stack.unshift(r);drawTiles();busy++;
   try{await serial(()=>Promise.race([identify(r,card,strips),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),30000))]));}catch(e){r.status="fail";r.why=e&&e.message==="timeout"?"Took too long. Tap Wrong card to search it, or remove it and scan again.":"Something went wrong reading this card.";r.choices=undefined;}
   finally{busy--;card.width=0;card.height=0;}
