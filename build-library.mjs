@@ -6,6 +6,8 @@
 // Re-runs only process cards that are new since the last build.
 import fs from "node:fs";
 import sharp from "sharp";
+import zlib from "node:zlib";
+import { Readable } from "node:stream";
 
 const OUT = "lib";
 const UA = { "User-Agent": "CardScannerLibraryBuilder/1.0", Accept: "application/json" };
@@ -86,9 +88,16 @@ function rowOf(c, face) {
 async function* streamCards(url) {
   const r = await fetch(url, { headers: { "User-Agent": UA["User-Agent"] } });
   if (!r.ok) throw new Error("Couldn't download card data: " + r.status);
+  let body = Readable.fromWeb(r.body);
+  if (/\.gz($|\?)/.test(url)) body = body.pipe(zlib.createGunzip());
+  const jsonl = /\.jsonl/.test(url);
   const dec = new TextDecoder(); let buf = "", pos = 0, depth = 0, inStr = false, esc = false, start = -1, n = 0;
-  for await (const chunk of r.body) {
+  for await (const chunk of body) {
     buf += dec.decode(chunk, { stream: true });
+    if (jsonl) { // one card per line
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1); if (line && line[0] === "{") { yield JSON.parse(line); n++; } }
+      continue;
+    }
     for (; pos < buf.length; pos++) { const ch = buf[pos];
       if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
       if (ch === '"') { inStr = true; continue; }
@@ -97,6 +106,7 @@ async function* streamCards(url) {
     }
     const keep = start >= 0 ? start : pos; buf = buf.slice(keep); pos -= keep; if (start >= 0) start -= keep;
   }
+  if (jsonl && buf.trim().startsWith("{")) { yield JSON.parse(buf.trim()); n++; }
   console.log("Cards read:", n);
 }
 async function main() {
@@ -110,7 +120,10 @@ async function main() {
   const def = bulk.data.find(b => b.type === "default_cards");
   console.log("Downloading Scryfall card data (read piece by piece; the file is very large)…");
   const sets = {}; const jobs = [];
-  for await (const c of streamCards(def.download_uri)) {
+  const dl = def && (def.download_uri || def.jsonl_download_uri);
+  if (!dl) throw new Error("Scryfall did not give a download link for default_cards");
+  console.log("From:", dl);
+  for await (const c of streamCards(dl)) {
     if (c.digital || c.lang !== "en" || c.set_type === "memorabilia" && c.layout !== "art_series") continue;
     const faces = (!c.image_uris && c.card_faces && c.card_faces[0].image_uris) ? c.card_faces.map((_, i) => i) : [0];
     for (const fi of faces) { const row = rowOf(c, fi); if (!row[10]) continue; sets[c.set] = c.set_name; jobs.push(row); }
