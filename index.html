@@ -97,7 +97,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <button class="btn sm hidden" id="homeClear">Clear sent cards</button>
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
-  <p class="hint" style="font-size:12px">Version 31 · Nov 4 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 32 · Nov 5 · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -257,16 +257,6 @@ async function ocr(canvas,psm,white){
   await worker.setParameters({tessedit_pageseg_mode:String(psm),tessedit_char_whitelist:white||""});
   try{const r=await worker.recognize(canvas);return{text:(r&&r.data&&r.data.text||"").trim(),conf:(r&&r.data&&r.data.confidence)||0};}finally{canvas.width=0;canvas.height=0;}
 }
-function parseCollector(t){
-  t=t.toUpperCase().replace(/[|]/g,"I");
-  let num="",set="";
-  const m1=t.match(/\b0*(\d{1,4}[A-Z]?)\s*\/\s*\d{1,4}\b/);if(m1)num=m1[1];
-  if(!num){const m2=t.match(/(?:^|[^0-9])0*(\d{1,4})(?![0-9])/);if(m2)num=m2[1];}
-  const words=(t.match(/[A-Z0-9]{3,5}/g)||[]).filter(w=>/[A-Z]/.test(w)&&!/^\d+[A-Z]$/.test(w));
-  const skip=new Set(["EN","TM","THE","AND","LLC","WIZARDS","COAST","ILLUS","ILL"]);
-  for(const w of words){if(!skip.has(w)&&!/^\d+$/.test(w)&&w.length>=3&&w.length<=5){set=w;break;}}
-  return{num,set};
-}
 const norm=s=>String(s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();
 function sim(a,b){a=norm(a);b=norm(b);if(!a||!b)return 0;if(a===b)return 1;
   const m=a.length,n=b.length;const d=Array.from({length:m+1},(_,i)=>[i]);for(let j=1;j<=n;j++)d[0][j]=j;
@@ -301,9 +291,10 @@ async function identify(r,card,strips){
   const tries=[];
   for(const mode of ["gray","bin"]){const o=await ocr(prep(strips.title,mode),7,TW);const t=clean(o.text);tries.push({t,conf:o.conf+(norm(t).length>=4?10:0)});}
   tries.sort((a,b)=>b.conf-a.conf);let title=tries[0].t;
+  strips.titles=strips.titleWide?await titleRead(strips.titleWide):[];if(strips.titleWide)strips.titleWide.width=0;if(norm(title).replace(/ /g,"").length<4&&strips.titles.length)title=strips.titles.slice().sort((a,b)=>b.length-a.length)[0];
   const W2="0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ•*.- ";
   const cand=[];
-  for(const mode of ["bin","gray"]){const o=await ocr(prep(strips.coll,mode),6,W2);const p=parseCollector(o.text);cand.push({o,p,score:(p.num?40:0)+(p.set?40:0)+o.conf/5});}
+  for(const mode of ["bin"]){const o=await ocr(prep(strips.coll,mode),6,W2);const p=parseCollector(o.text);cand.push({o,p,score:(p.num?40:0)+(p.set?40:0)+o.conf/5});}
   cand.sort((a,b)=>b.score-a.score);
   const collText=cand.map(c=>c.o.text).join(" | ");const cl=cand[0].p;
   strips.title.width=strips.coll.width=0;
@@ -459,9 +450,9 @@ async function capture(g,box,pre){
   armed=false;still=0;lastSig=g||idSig(rect());
   flash("snap");msg("Got it ✓ next card");
   const grab=()=>{const card=document.createElement("canvas");card.width=630;card.height=880;card.getContext("2d").drawImage(v,box.x,box.y,box.w,box.h,0,0,630,880);
-    const strips={title:strip(v,box.x+box.w*0.05,box.y+box.h*0.035,box.w*0.74,box.h*0.06,64),coll:strip(v,box.x+box.w*0.025,box.y+box.h*0.885,box.w*0.5,box.h*0.095,96),corner:strip(v,box.x+box.w*0.02,box.y+box.h*0.9,box.w*0.42,box.h*0.09,220)};
+    const cw=strip(v,box.x-box.w*0.01,box.y+box.h*0.85,box.w*0.53,box.h*0.21,498);const strips={title:strip(v,box.x+box.w*0.05,box.y+box.h*0.035,box.w*0.74,box.h*0.06,64),titleWide:strip(v,box.x+box.w*0.03,box.y-box.h*0.015,box.w*0.79,box.h*0.15,240),coll:strip(cw,0,0,cw.width,cw.height,cw.height),corner:cw};
     return{card,strips,sh:sharpness(strips.coll)+sharpness(strips.title)};};
-  let best=grab();const corners=[best.strips.corner];for(let k=0;k<2;k++){await new Promise(res=>setTimeout(res,110));if(!stream)break;const f=grab();corners.push(f.strips.corner);if(f.sh>best.sh){best.card.width=0;best.strips.title.width=best.strips.coll.width=0;best=f;}else{f.card.width=0;f.strips.title.width=f.strips.coll.width=0;}}
+  let best=grab();const corners=[best.strips.corner];for(let k=0;k<2;k++){await new Promise(res=>setTimeout(res,110));if(!stream)break;const f=grab();corners.push(f.strips.corner);if(f.sh>best.sh){best.card.width=0;best.strips.title.width=best.strips.coll.width=(best.strips.titleWide||{}).width=0;best=f;}else{f.card.width=0;f.strips.title.width=f.strips.coll.width=(f.strips.titleWide||{}).width=0;}}
   const card=best.card,strips=best.strips;strips.corners=corners;
   const thumb=card.toDataURL("image/jpeg",0.6);
   let mini="";try{const mc=document.createElement("canvas");mc.width=240;mc.height=335;mc.getContext("2d").drawImage(card,0,0,240,335);mini=mc.toDataURL("image/jpeg",0.75).split(",")[1];mc.width=0;}catch(e){}
@@ -726,25 +717,31 @@ function builtFpMatch(fp,out){if(!built)return;const A=built.art,F=built.full,C=
     if(top.length<8||d<top[top.length-1].d){top.push({i,d});top.sort((p,q)=>p.d-q.d);if(top.length>8)top.pop();}}
   for(const t of top)out.push({e:{c:builtCard(t.i),k:built.rows[t.i][0]},d:t.d});}
 
-/* ---------- corner reader v2: find each printed line, read the number on several frames, vote, check against the library ---------- */
-async function cornerRead(c,numOnly){
-  const b=prep(c,"bin");const W=b.width,H=b.height;const d=b.getContext("2d",{willReadFrequently:true}).getImageData(0,0,W,H).data;
-  const rows=new Float32Array(H);for(let y=0;y<H;y++){let k=0;for(let x=0;x<W;x++)if(d[(y*W+x)*4]<128)k++;rows[y]=k;}
-  const bands=[];let s=-1;for(let y=0;y<=H;y++){const on=y<H&&rows[y]>W*0.015&&rows[y]<W*0.85;if(on&&s<0)s=y;if(!on&&s>=0){if(y-s>=H*0.06)bands.push([s,y]);s=-1;}}
-  b.width=0;
-  const use=bands.slice(-3);const toks=[],sets=[];let text="";
-  for(const [y0,y1] of use){const bh=y1-y0,pad=Math.round(bh*0.35),yy=Math.max(0,y0-pad),hh=Math.min(H-yy,bh+pad*2);
-    const sc=Math.max(1,Math.min(4,44/bh));const line=document.createElement("canvas");line.width=Math.round(W*sc);line.height=Math.round(hh*sc);
-    const lg=line.getContext("2d");lg.imageSmoothingQuality="high";lg.drawImage(c,0,yy,W,hh,0,0,line.width,line.height);
-    const kinds=numOnly?[["0123456789/ CURMLTSP","num"]]:[["0123456789/ CURMLTSP","num"],["ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 •*-","set"]];
-    for(const [wl,kind] of kinds){
-      const cp=document.createElement("canvas");cp.width=line.width;cp.height=line.height;cp.getContext("2d").drawImage(line,0,0);
-      const o=await ocr(prep(cp,"bin"),7,wl);cp.width=0;const t=(o.text||"").toUpperCase();text+=` [${kind}:${t.trim()}]`;
-      if(kind==="num")(t.match(/\d{1,4}/g)||[]).forEach(n=>toks.push(n));
-      else(t.match(/[A-Z0-9]{3,5}/g)||[]).filter(w=>/[A-Z]/.test(w)&&!/^(EN|TM)$/.test(w)).forEach(w=>sets.push(w));}
-    line.width=0;}
-  return{toks,sets:[...new Set(sets)],text:text.trim()};
-}
+/* ---------- corner reader v3: read the whole bottom-left block, only trust numbers printed the way cards print them ---------- */
+// Cards print the collector number as "0098" (2022 on) or "98/280" (older). A lone "5" next to the artist's name is not a number.
+function fixDigits(t){return String(t||"").toUpperCase().replace(/[|]/g,"I")
+  .replace(/(\d)[O](?=\d|\b)/g,"$10").replace(/\b[O](?=\d{2,3}\b)/g,"0").replace(/(\d)[O]/g,"$10")
+  .replace(/(\d)[S](?=\d|\b)/g,"$15").replace(/(\d)[IL](?=\d)/g,"$11").replace(/(\d)B(?=\d)/g,"$18");}
+function parseCorner(t){t=fixDigits(t);const nums=[],sets=[];let m;
+  for(const L of t.split(/\n/)){
+    const re1=/(?:^|[^0-9])0(\d{3})(?![0-9])/g;while((m=re1.exec(L)))nums.push({n:String(+m[1]),strong:true});
+    const re2=/(?:^|[^0-9])(\d{1,3})\s*\/\s*(\d{2,3})(?![0-9])/g;while((m=re2.exec(L)))if(+m[1]>0&&+m[1]<=+m[2]+80)nums.push({n:String(+m[1]),strong:true});
+    const re3=/(?:^|\s)[CURMLSTP]\s{0,2}(\d{1,3})(?![0-9\/])/g;while((m=re3.exec(L)))nums.push({n:String(+m[1]),strong:false});
+    const re4=/\b([A-Z0-9]{3,4})\s*[•*.\-·+]?\s*(?:EN|FN|EM|EH|EW|FM)\b/g;while((m=re4.exec(L)))if(/[A-Z]/.test(m[1])&&!/^(THE|AND|ILL)$/.test(m[1]))sets.push(m[1]);}
+  return{nums,sets};}
+function parseCollector(t){const p=parseCorner(t);const s=p.nums.find(x=>x.strong);
+  return{num:s?s.n:"",strong:!!s,weak:p.nums.filter(x=>!x.strong).map(x=>x.n),set:p.sets[0]||""};}
+async function cornerRead(c){const out={nums:[],sets:[],text:""};
+  for(const mode of ["bin","gray"]){const o=await ocr(prep(c,mode),6,"0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ•*.-· ");const t=String(o.text||"");
+    out.text+=(out.text?" | ":"")+t.toUpperCase().replace(/\s+/g," ").trim();const p=parseCorner(t);out.nums.push(...p.nums);out.sets.push(...p.sets);
+    if(p.nums.some(x=>x.strong))break;}
+  return out;}
+// the title, read from a taller window so a slightly-off crop still has it
+async function titleRead(c){const TW="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz,'- \n";const out=[];
+  for(const mode of ["gray","bin"]){const o=await ocr(prep(c,mode),6,TW);
+    String(o.text||"").split(/\n/).map(t=>t.replace(/[^A-Za-z,'\- ]/g," ").replace(/\s+/g," ").trim()).filter(t=>norm(t).replace(/ /g,"").length>=4).forEach(t=>out.push(t));
+    if(out.length)break;}
+  return out;}
 function builtDist(fp,i){const A=built.art,F=built.full,C=built.col;let cd=0;const o=27*i;for(let k=0;k<27;k++)cd+=Math.abs(fp.col[k]-C[o+k]);
   return pop(fp.art[0]^A[2*i])+pop(fp.art[1]^A[2*i+1])+0.6*(pop(fp.full[0]^F[2*i])+pop(fp.full[1]^F[2*i+1]))+cd/27/4;}
 async function cornerMatch(r,card,strips,title,cand){
@@ -752,33 +749,39 @@ async function cornerMatch(r,card,strips,title,cand){
   if(!built.idx){built.idx=new Map();built.bySet=new Map();built.rows.forEach((row,i)=>{const k=row[4]+":"+String(row[5]).toLowerCase();if(!built.idx.has(k))built.idx.set(k,[]);built.idx.get(k).push(i);
       if(!built.bySet.has(row[4]))built.bySet.set(row[4],[]);built.bySet.get(row[4]).push(i);});built.setKeys=Object.keys(built.sets);}
   const lock=opts.lockSet?opts.lockSet.toLowerCase():"";
-  // read the corner on every frame we grabbed, and vote on the number
-  const frames=strips.corners||[strips.corner];const votes=new Map(),texts=[];let setReads=[];
-  const add=(tok,w)=>{const n=String(tok).replace(/^0+(?=\d)/,"");if(!n||n.length>4)return;votes.set(n,(votes.get(n)||0)+w);};
-  for(const fc of frames){if(!fc||!fc.width)continue;const rd=await cornerRead(fc,!!lock);texts.push(rd.text);setReads.push(...rd.sets);
-    const seen=new Set();rd.toks.forEach(t=>{const n=t.replace(/^0+(?=\d)/,"");if(seen.has(n))return;seen.add(n);add(t,/^0\d{2,3}$/.test(t)?2:t.length>=3?1.2:t.length===2?0.8:0.3);});}
-  cand.forEach(c=>{if(c.p.num)add(c.p.num,1);});
-  r.read.corner=texts.join(" / ");
-  const nums=[...votes.entries()].sort((a,b)=>b[1]-a[1]).slice(0,4);
+  // every title line we read is a witness for the name
+  const titles=[...new Set([title,...(strips.titles||[])].filter(t=>t&&norm(t).replace(/ /g,"").length>=4))];
+  const nameSim=nm=>{nm=String(nm).split(" // ")[0];let s=0;for(const t of titles)s=Math.max(s,sim(nm,t));return s;};
+  // read the corner on each frame; count how many frames printed-format numbers agree
+  const frames=(strips.corners||[strips.corner]).filter(f=>f&&f.width);const strong=new Map(),weak=new Map(),texts=[],setReads=[];
+  for(const fc of frames){const rd=await cornerRead(fc);texts.push(rd.text);setReads.push(...rd.sets);const seen=new Set();
+    rd.nums.forEach(x=>{const k=(x.strong?"s":"w")+x.n;if(seen.has(k))return;seen.add(k);const M=x.strong?strong:weak;M.set(x.n,(M.get(x.n)||0)+1);});
+    if([...strong.values()].some(v=>v>=2))break;}
+  cand.forEach(c=>{if(c.p.num&&c.p.strong)strong.set(c.p.num,(strong.get(c.p.num)||0)+0.5);(c.p.weak||[]).forEach(n=>weak.set(n,(weak.get(n)||0)+0.25));});
+  r.read.corner=texts.join(" / ");r.read.titles=titles;
+  const nums=[...new Set([...strong.keys(),...weak.keys()])];
   const sets=[...new Set([...setReads,...cand.map(c=>c.p.set).filter(Boolean)])].map(x=>x.toLowerCase());
   const recent=[...new Set(stack.filter(x=>x.status==="ok"&&x.set).slice(0,20).map(x=>String(x.set).toLowerCase()))];
-  const codes=lock?[lock]:[...new Set([...(sets.length?built.setKeys.filter(code=>sets.some(st=>code===st||(st.length>=3&&code.length>=3&&sim(code,st)>=0.66))):[]),...recent])];
+  const setHit=code=>lock?2:sets.includes(code)?2:sets.some(st=>st.length>=3&&sim(code,st)>=0.66)?1:0;
+  const codes=lock?[lock]:[...new Set([...(sets.length?built.setKeys.filter(code=>setHit(code)>0):[]),...recent])];
   const fp=fingerprint(card,630,880);const found=new Map();
-  const consider=(i,v,via)=>{const code=built.rows[i][4];const pd=builtDist(fp,i);const ts=title?sim(String(built.rows[i][3]).split(" // ")[0],title):0;
-    const score=-v*10+pd*0.3-ts*25-(sets.includes(code)?4:0)-(recent.includes(code)?3:0);const p=found.get(i);if(!p||score<p.score)found.set(i,{i,v,pd,ts,score,via});};
-  for(const [n,v] of nums)for(const code of codes){const ix=built.idx.get(code+":"+n.toLowerCase());if(ix)ix.forEach(i=>consider(i,v,"corner"));}
-  // the name is a second witness: in the chosen set(s), the card whose name matches what we read
-  if(title&&norm(title).length>=4)for(const code of (lock?[lock]:codes.slice(0,6))){const ix=built.bySet.get(code)||[];let best=null;
-    for(const i of ix){const s=sim(String(built.rows[i][3]).split(" // ")[0],title);if(!best||s>best.s)best={i,s};}
-    if(best&&best.s>=0.72)consider(best.i,votes.get(String(built.rows[best.i][5]))||0,"name");}
+  const consider=(i,via)=>{const row=built.rows[i],code=row[4],n=String(row[5]).toLowerCase();const sv=strong.get(n)||0,wv=weak.get(n)||0;
+    const pd=builtDist(fp,i),ts=nameSim(row[3]);const sh=setHit(code);
+    const score=-(sv*12+wv*2)+pd*0.3-ts*25-sh*4-(recent.includes(code)?3:0);
+    const p=found.get(i);if(!p||score<p.score)found.set(i,{i,sv,wv,pd,ts,sh,score,via});};
+  for(const n of nums)for(const code of codes){const ix=built.idx.get(code+":"+n.toLowerCase());if(ix)ix.forEach(i=>consider(i,"corner"));}
+  if(titles.length)for(const code of (lock?[lock]:codes.slice(0,6))){const ix=built.bySet.get(code)||[];
+    for(const i of ix){if(nameSim(built.rows[i][3])>=0.72)consider(i,"name");}}
   const list=[...found.values()].sort((a,b)=>a.score-b.score);if(!list.length)return false;
-  const b=list[0],nx=list[1];
-  const agreed=b.v>=3||b.ts>=0.6;                    // two frames agree on the number, or the name confirms it
-  const clear=!nx||nx.score-b.score>=8;               // nothing else close
-  const status=agreed&&clear?"ok":"pick";
-  if(!agreed&&b.v<1.5&&b.ts<0.4&&b.pd>48)return false;
+  const b=list[0],nx=list.find(x=>built.rows[x.i][1]!==built.rows[b.i][1]);
+  const sameName=list.filter(x=>norm(built.rows[x.i][3])===norm(built.rows[b.i][3])).length;
+  const clear=!nx||nx.score-b.score>=8;
+  // "sure" only with real evidence: the printed number seen twice in a known set, or the number once plus the name
+  const sure=clear&&((b.sv>=2&&(b.sh>=1||b.ts>=0.5))||(b.sv>=1&&b.ts>=0.6&&b.sh>=1)||(b.sv>=1&&b.ts>=0.8)||(b.ts>=0.85&&b.sh>=1&&sameName===1));
+  if(!sure&&b.sv<1&&b.ts<0.6&&!(b.wv>=1&&b.pd<40))return false;
+  const status=sure?"ok":"pick";
   done(r,builtCard(b.i),status,list.length>1?list.slice(0,6).map(x=>builtCard(x.i)):undefined);if(status==="ok")r.choices=undefined;
-  else r.why=b.ts>=0.6?"Name and number disagree. Tap the right card.":"Couldn't read the corner number for sure. Tap the right card.";
+  else r.why=b.sv>=1&&b.ts<0.6?"Read the number but not the name. Check it's right.":b.ts>=0.6?"Read the name but not the corner number. Tap the right printing.":"Couldn't read the corner for sure. Tap the right card.";
   r.via=b.via==="name"?"name":"corner";return true;
 }
 
