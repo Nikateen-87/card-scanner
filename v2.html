@@ -98,7 +98,7 @@ label.f{display:block;margin:12px 0 4px;font-weight:600}
   <p id="startErr" class="bad"></p>
   <p class="hint" id="ocrState">Loading the card reader…</p>
   <p class="hint" id="netState"></p>
-  <p class="hint" style="font-size:12px">Version 2.3 · Nov 4 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
+  <p class="hint" style="font-size:12px">Version 2.4 · Nov 4 (test) · <button class="btn sm" id="updBtn" style="min-height:30px">Get latest version</button></p>
 </div>
 
 <div id="cam">
@@ -696,7 +696,8 @@ $("claudeBtn").onclick=async()=>{
   const n=rows.reduce((s,r)=>s+r.qty,0),unsure=rows.filter(r=>r.status!=="ok").length;
   const text=`Add these ${n} scanned cards to my binder.${unsure?` ${unsure} need checking (photos attached).`:""}`;
   try{
-    if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,text});}
+    const full=text+"\n\n"+lines.join("\n");
+    if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files,text:full});}
     else if(navigator.share){await navigator.share({text:text+"\n\n"+lines.join("\n")});}
     else{await navigator.clipboard.writeText(text+"\n\n"+lines.join("\n"));toast("Copied. Paste it into your Claude chat.",4000);}
     rows.forEach(r=>r.sent=true);saveStack();drawStack();
