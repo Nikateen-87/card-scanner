@@ -1,0 +1,53 @@
+name: Fetch set symbols
+# Downloads every Magic set's symbol (SVG) from Scryfall into one file, img/seticons.json,
+# so the Card Binder's Sets page can show them. Runs when this file changes, or by hand.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/fetch-seticons.yml']
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download set symbols
+        run: |
+          mkdir -p img
+          python3 - <<'PY'
+          import json, re, time, urllib.request
+          def get(u):
+              r = urllib.request.Request(u, headers={"User-Agent": "CardBinderSets/1.0", "Accept": "*/*"})
+              for i in range(3):
+                  try:
+                      return urllib.request.urlopen(r, timeout=30).read()
+                  except Exception as e:
+                      time.sleep(1 + i)
+              return None
+          sets = json.loads(get("https://api.scryfall.com/sets"))["data"]
+          icons, codes, info = {}, {}, {}
+          for s in sets:
+              u = s.get("icon_svg_uri") or ""
+              key = re.sub(r"\?.*$", "", u).rsplit("/", 1)[-1].replace(".svg", "")
+              if key and key not in icons:
+                  b = get(u)
+                  if b:
+                      t = b.decode("utf-8", "ignore")
+                      t = re.sub(r"<\?xml[^>]*>|<!DOCTYPE[^>]*>|<!--.*?-->", "", t, flags=re.S).strip()
+                      t = re.sub(r"\s+(id|class|style)=\"[^\"]*\"", "", t)
+                      icons[key] = t
+                  time.sleep(0.08)
+              if key in icons:
+                  codes[s["code"].upper()] = key
+              info[s["code"].upper()] = [s.get("name", ""), s.get("released_at", ""), s.get("set_type", ""), s.get("card_count", 0), (s.get("parent_set_code") or "").upper()]
+          json.dump({"icons": icons, "sets": codes, "info": info}, open("img/seticons.json", "w"), separators=(",", ":"))
+          print(len(icons), "symbols for", len(codes), "sets")
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add img/seticons.json
+          git diff --cached --quiet || (git commit -m "Set symbols" && git pull --rebase && git push)
