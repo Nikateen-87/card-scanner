@@ -1,0 +1,163 @@
+{
+ "!\"Archmage of Runes\"": [
+  {
+   "name": "Archmage of Runes",
+   "set": "pmei",
+   "set_name": "Media and Collaboration Promos",
+   "set_type": "promo",
+   "collector_number": "2026-30",
+   "released_at": "2026-11-05",
+   "rarity": "rare",
+   "finishes": [
+    "foil"
+   ],
+   "promo_types": [
+    "mediainsert"
+   ],
+   "prices": {
+    "usd": null,
+    "usd_foil": null,
+    "usd_etched": null,
+    "eur": null,
+    "eur_foil": null,
+    "tix": null
+   },
+   "id": "fb754457-7411-4e12-98a1-a3775a854bec",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/f/b/fb754457-7411-4e12-98a1-a3775a854bec.jpg?1794451291"
+  },
+  {
+   "name": "Archmage of Runes",
+   "set": "pfdn",
+   "set_name": "Foundations Promos",
+   "set_type": "promo",
+   "collector_number": "30s",
+   "released_at": "2024-11-15",
+   "rarity": "rare",
+   "finishes": [
+    "foil"
+   ],
+   "promo_types": [
+    "prerelease",
+    "datestamped"
+   ],
+   "prices": {
+    "usd": null,
+    "usd_foil": "5.00",
+    "usd_etched": null,
+    "eur": null,
+    "eur_foil": "6.97",
+    "tix": null
+   },
+   "id": "0073371f-a31c-4b1f-9926-53efa0aadda4",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/0/0/0073371f-a31c-4b1f-9926-53efa0aadda4.jpg?1783908551"
+  },
+  {
+   "name": "Archmage of Runes",
+   "set": "fdn",
+   "set_name": "Foundations",
+   "set_type": "core",
+   "collector_number": "450",
+   "released_at": "2024-11-15",
+   "rarity": "rare",
+   "finishes": [
+    "nonfoil",
+    "foil"
+   ],
+   "promo_types": [
+    "boosterfun"
+   ],
+   "prices": {
+    "usd": "3.76",
+    "usd_foil": "5.04",
+    "usd_etched": null,
+    "eur": "5.13",
+    "eur_foil": "6.35",
+    "tix": "0.02"
+   },
+   "id": "28658ae0-9b5b-497d-a3c9-0a0626b7b344",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/2/8/28658ae0-9b5b-497d-a3c9-0a0626b7b344.jpg?1783908983"
+  },
+  {
+   "name": "Archmage of Runes",
+   "set": "fdn",
+   "set_name": "Foundations",
+   "set_type": "core",
+   "collector_number": "372",
+   "released_at": "2024-11-15",
+   "rarity": "rare",
+   "finishes": [
+    "foil"
+   ],
+   "promo_types": [
+    "manafoil",
+    "boosterfun"
+   ],
+   "prices": {
+    "usd": null,
+    "usd_foil": "24.65",
+    "usd_etched": null,
+    "eur": null,
+    "eur_foil": "33.33",
+    "tix": "0.02"
+   },
+   "id": "b6117837-83d4-4f84-967a-f5551515f0b9",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/b/6/b6117837-83d4-4f84-967a-f5551515f0b9.jpg?1783909009"
+  },
+  {
+   "name": "Archmage of Runes",
+   "set": "fdn",
+   "set_name": "Foundations",
+   "set_type": "core",
+   "collector_number": "304",
+   "released_at": "2024-11-15",
+   "rarity": "rare",
+   "finishes": [
+    "nonfoil",
+    "foil"
+   ],
+   "promo_types": [
+    "boosterfun"
+   ],
+   "prices": {
+    "usd": "5.16",
+    "usd_foil": "6.71",
+    "usd_etched": null,
+    "eur": "5.23",
+    "eur_foil": "7.63",
+    "tix": "0.02"
+   },
+   "id": "15f15cc5-c3dc-4830-aa55-13080c738739",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/1/5/15f15cc5-c3dc-4830-aa55-13080c738739.jpg?1783909032"
+  },
+  {
+   "name": "Archmage of Runes",
+   "set": "fdn",
+   "set_name": "Foundations",
+   "set_type": "core",
+   "collector_number": "30",
+   "released_at": "2024-11-15",
+   "rarity": "rare",
+   "finishes": [
+    "nonfoil",
+    "foil"
+   ],
+   "promo_types": null,
+   "prices": {
+    "usd": "2.77",
+    "usd_foil": "3.46",
+    "usd_etched": null,
+    "eur": "3.81",
+    "eur_foil": "4.41",
+    "tix": "0.02"
+   },
+   "id": "334b5018-2da9-49f1-9d09-83d312ecfb02",
+   "digital": false,
+   "img": "https://cards.scryfall.io/normal/front/3/3/334b5018-2da9-49f1-9d09-83d312ecfb02.jpg?1783909121"
+  }
+ ]
+}
