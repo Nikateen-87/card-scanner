@@ -1,0 +1,56 @@
+name: Scryfall lookup
+# Each line of img/lookup.txt is a Scryfall search (for example: !"Archmage of Runes").
+# This finds every printing, saves the details to img/lookup.json and each printing's
+# picture to img/cards/<set>-<number>.jpg, so the Card Binder can match promo cards.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['img/lookup.txt', '.github/workflows/scryfall-lookup.yml']
+permissions:
+  contents: write
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Search Scryfall
+        run: |
+          mkdir -p img/cards
+          touch img/lookup.txt
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request, os
+          H = {"User-Agent": "CardBinderLookup/1.0", "Accept": "application/json"}
+          def get(u, raw=False):
+              for i in range(3):
+                  try:
+                      b = urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=30).read()
+                      return b if raw else json.loads(b)
+                  except Exception as e:
+                      time.sleep(1 + i)
+              return None
+          out = {}
+          for q in [l.strip() for l in open("img/lookup.txt") if l.strip() and not l.startswith("#")]:
+              url = "https://api.scryfall.com/cards/search?" + urllib.parse.urlencode({"q": q, "unique": "prints", "include_extras": "true", "include_variations": "true", "order": "released"})
+              rows = []
+              while url:
+                  d = get(url) or {}
+                  for c in d.get("data", []):
+                      img = (c.get("image_uris") or (c.get("card_faces") or [{}])[0].get("image_uris") or {}).get("normal", "")
+                      rows.append({k: c.get(k) for k in ["name", "set", "set_name", "set_type", "collector_number", "released_at", "rarity", "finishes", "promo_types", "prices", "id", "digital"]} | {"img": img})
+                      if img and not c.get("digital"):
+                          safe = "img/cards/" + (c["set"] + "-" + c["collector_number"]).replace("/", "_") + ".jpg"
+                          if not os.path.exists(safe):
+                              b = get(img, raw=True)
+                              if b: open(safe, "wb").write(b)
+                          time.sleep(0.1)
+                  url = d.get("next_page") if d.get("has_more") else None
+                  time.sleep(0.1)
+              out[q] = rows
+              print(q, len(rows))
+          json.dump(out, open("img/lookup.json", "w"), indent=1)
+          PY
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Scryfall lookup
+          file_pattern: 'img/lookup.json img/cards/*.jpg'
