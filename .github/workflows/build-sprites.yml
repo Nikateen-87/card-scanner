@@ -1,0 +1,77 @@
+name: Build card picture sheets
+# For each set code in img/sprites.txt, download every card's small Scryfall picture and
+# pack them into one sheet: img/sprites/<code>.jpg, plus img/sprites/<code>.json
+# (which tile is which collector number). The Card Binder shows missing cards from these.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['img/sprites.txt', '.github/workflows/build-sprites.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sheets
+        run: |
+          pip install --quiet pillow
+          mkdir -p img/sprites
+          touch img/sprites.txt
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request, os, io, math
+          from concurrent.futures import ThreadPoolExecutor
+          from PIL import Image
+          H = {"User-Agent": "CardBinderSprites/1.0", "Accept": "*/*"}
+          TW, TH = 146, 204
+          def get(u, raw=False):
+              for i in range(4):
+                  try:
+                      b = urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=40).read()
+                      return b if raw else json.loads(b)
+                  except Exception:
+                      time.sleep(1 + i * 2)
+              return None
+          codes = [l.strip().lower() for l in open("img/sprites.txt") if l.strip() and not l.startswith("#")]
+          for code in codes:
+              if os.path.exists(f"img/sprites/{code}.json"):
+                  continue
+              url = "https://api.scryfall.com/cards/search?" + urllib.parse.urlencode({"q": f"e:{code}", "unique": "prints", "include_extras": "true", "include_variations": "true", "order": "set"})
+              cards = []
+              while url:
+                  d = get(url) or {}
+                  for c in d.get("data", []):
+                      iu = (c.get("image_uris") or (c.get("card_faces") or [{}])[0].get("image_uris") or {}).get("small", "")
+                      if iu:
+                          cards.append((str(c["collector_number"]), iu))
+                  url = d.get("next_page") if d.get("has_more") else None
+                  time.sleep(0.12)
+              seen, uniq = set(), []
+              for n, u in cards:
+                  if n not in seen:
+                      seen.add(n); uniq.append((n, u))
+              if not uniq:
+                  print(code, "no cards"); continue
+              def fetch(item):
+                  b = get(item[1], raw=True)
+                  try:
+                      return Image.open(io.BytesIO(b)).convert("RGB").resize((TW, TH)) if b else None
+                  except Exception:
+                      return None
+              with ThreadPoolExecutor(8) as ex:
+                  imgs = list(ex.map(fetch, uniq))
+              cols = min(20, len(uniq)); rows = math.ceil(len(uniq) / cols)
+              sheet = Image.new("RGB", (cols * TW, rows * TH), (40, 40, 48))
+              m = {}
+              for i, ((n, _), im) in enumerate(zip(uniq, imgs)):
+                  if im is None: continue
+                  sheet.paste(im, ((i % cols) * TW, (i // cols) * TH)); m[n] = i
+              sheet.save(f"img/sprites/{code}.jpg", "JPEG", quality=72, optimize=True, progressive=True)
+              json.dump({"cols": cols, "rows": rows, "w": TW, "h": TH, "map": m}, open(f"img/sprites/{code}.json", "w"), separators=(",", ":"))
+              print(code, len(m), "cards", os.path.getsize(f"img/sprites/{code}.jpg") // 1024, "KB")
+          PY
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Card picture sheets
+          file_pattern: 'img/sprites/*'
