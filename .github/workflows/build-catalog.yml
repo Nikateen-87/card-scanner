@@ -1,0 +1,65 @@
+name: Build binder card list
+# Builds img/mtg-catalog.json for the Card Binder's Whole set view: every paper printing on
+# Scryfall (English, plus printings that only exist in another language such as the Japanese
+# Mystical Archive), with collector number, rarity, finishes and prices.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/build-catalog.yml', 'img/catalog-request.txt']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build card list
+        run: |
+          python3 - <<'PY'
+          import json, re, urllib.request, datetime
+          H = {"User-Agent": "CardBinderCatalog/1.0", "Accept": "application/json"}
+          get = lambda u: urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=120)
+          bulk = json.load(get("https://api.scryfall.com/bulk-data"))
+          url = next(b["download_uri"] for b in bulk["data"] if b["type"] == "default_cards")
+          cards = json.load(get(url))
+          FLAG = dict(showcase=1, extendedart=2, borderless=4, basic=8, token=16, art=32, dfc=64, foil=128, nonfoil=256, etched=512)
+          sets = {}
+          for c in cards:
+              if c.get("digital"): continue
+              if c.get("set_type") == "memorabilia" and c.get("layout") != "art_series": continue
+              fe, fin = c.get("frame_effects") or [], c.get("finishes") or []
+              f = 0
+              if "showcase" in fe: f |= 1
+              if "extendedart" in fe: f |= 2
+              if c.get("border_color") == "borderless": f |= 4
+              tl = c.get("type_line") or ((c.get("card_faces") or [{}])[0].get("type_line") or "")
+              if "Basic Land" in tl: f |= 8
+              if c.get("layout") in ("token", "double_faced_token"): f |= 16
+              if c.get("layout") == "art_series": f |= 32
+              if c.get("card_faces") and not c.get("image_uris"): f |= 64
+              if "foil" in fin: f |= 128
+              if "nonfoil" in fin: f |= 256
+              if "etched" in fin: f |= 512
+              p = c.get("prices") or {}
+              name = c["card_faces"][0]["name"] if c.get("layout") == "art_series" and c.get("card_faces") else c["name"]
+              usd = float(p["usd"]) if p.get("usd") else None
+              usdf = float(p["usd_foil"]) if p.get("usd_foil") else (float(p["usd_etched"]) if p.get("usd_etched") else None)
+              row = [c["collector_number"], name, (c.get("rarity") or "c")[0], f, usd, usdf]
+              if c.get("lang", "en") != "en": row.append(c["lang"])
+              s = sets.setdefault(c["set"], {"n": c["set_name"], "c": []})
+              s["c"].append(row)
+          def key(r):
+              m = re.match(r"(\d+)(.*)", str(r[0]))
+              return (int(m.group(1)), m.group(2)) if m else (10**9, str(r[0]))
+          n = 0
+          for s in sets.values():
+              s["c"].sort(key=key); n += len(s["c"])
+          out = {"v": {"v": datetime.datetime.utcnow().isoformat() + "Z", "built": "scryfall default_cards", "count": n}, "sets": sets}
+          json.dump(out, open("img/mtg-catalog.json", "w"), separators=(",", ":"), ensure_ascii=False)
+          print(len(sets), "sets", n, "cards")
+          PY
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Binder card list
+          file_pattern: 'img/mtg-catalog.json'
