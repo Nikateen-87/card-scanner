@@ -21,8 +21,16 @@ jobs:
           H = {"User-Agent": "CardBinderCatalog/1.0", "Accept": "application/json"}
           get = lambda u: urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=120)
           bulk = json.load(get("https://api.scryfall.com/bulk-data"))
-          url = next(b["download_uri"] for b in bulk["data"] if b["type"] == "default_cards")
-          cards = json.load(get(url))
+          d = next(b for b in bulk["data"] if b["type"] == "default_cards")
+          url = d.get("download_uri") or d.get("jsonl_download_uri")
+          print("From:", url)
+          import gzip, io
+          resp = get(url)
+          if re.search(r"\.gz($|\?)", url): resp = gzip.GzipFile(fileobj=resp)
+          if ".jsonl" in url:
+              cards = (json.loads(l) for l in io.TextIOWrapper(resp, encoding="utf-8") if l.strip().startswith("{"))
+          else:
+              cards = json.load(resp)
           FLAG = dict(showcase=1, extendedart=2, borderless=4, basic=8, token=16, art=32, dfc=64, foil=128, nonfoil=256, etched=512)
           sets = {}
           for c in cards:
